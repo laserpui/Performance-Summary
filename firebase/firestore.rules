@@ -36,8 +36,16 @@ service cloud.firestore {
       return value is int && value >= 2500 && value <= 3000;
     }
 
-    function validMonth(value) {
+    function validGregorianYear(value) {
+      return value is int && value >= 2000 && value <= 2200;
+    }
+
+    function validMonthZeroBased(value) {
       return value is int && value >= 0 && value <= 11;
+    }
+
+    function validMonthOneBased(value) {
+      return value is int && value >= 1 && value <= 12;
     }
 
     function validScore(value) {
@@ -76,14 +84,25 @@ service cloud.firestore {
 
     function validEmployee(data) {
       return data.keys().hasOnly([
-          'name', 'nameNormalized', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'
+          'name', 'nameNormalized', 'fullName', 'employeeCode', 'startDate',
+          'isActive', 'sortOrder', 'legacyIds', 'source', 'version',
+          'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'migratedAt'
         ])
         && data.name is string
         && data.name.size() >= 2
-        && data.name.size() <= 80
+        && data.name.size() <= 100
         && data.nameNormalized is string
         && data.nameNormalized.size() >= 2
-        && data.nameNormalized.size() <= 80
+        && data.nameNormalized.size() <= 100
+        && (!('fullName' in data) || (data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 100))
+        && (!('employeeCode' in data) || (data.employeeCode is string && data.employeeCode.size() <= 20))
+        && (!('startDate' in data) || (data.startDate is string && data.startDate.size() <= 10))
+        && (!('isActive' in data) || data.isActive is bool)
+        && (!('sortOrder' in data) || (data.sortOrder is int && data.sortOrder >= 0 && data.sortOrder <= 100000))
+        && (!('legacyIds' in data) || data.legacyIds is map)
+        && (!('source' in data) || (data.source is string && data.source.size() <= 100))
+        && (!('version' in data) || (data.version is int && data.version >= 1))
+        && (!('migratedAt' in data) || data.migratedAt is timestamp)
         && data.createdAt is timestamp
         && data.createdBy is string
         && data.updatedAt == request.time
@@ -99,7 +118,7 @@ service cloud.firestore {
         && data.employeeId.size() >= 2
         && data.employeeId.size() <= 80
         && validYear(data.year)
-        && validMonth(data.month)
+        && validMonthZeroBased(data.month)
         && validScores(data.scores)
         && data.note is string
         && data.note.size() <= 2000
@@ -121,6 +140,53 @@ service cloud.firestore {
         && request.resource.data.createdBy == resource.data.createdBy;
     }
 
+    function validMoney(value) {
+      return value is number && value >= -100000000 && value <= 100000000;
+    }
+
+    function validServiceIncentive(data) {
+      return data.keys().hasOnly([
+          'employeeId', 'yearMonth', 'year', 'month', 'salesAmount',
+          'evaluationAmount', 'timeAmount', 'totalAmount', 'source',
+          'sourceRecordId', 'sourceCreatedAt', 'sourceUpdatedAt', 'version',
+          'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'importedAt'
+        ])
+        && data.employeeId is string
+        && data.employeeId.size() >= 2
+        && data.employeeId.size() <= 80
+        && data.yearMonth is string
+        && data.yearMonth.size() == 7
+        && validGregorianYear(data.year)
+        && validMonthOneBased(data.month)
+        && validMoney(data.salesAmount)
+        && validMoney(data.evaluationAmount)
+        && validMoney(data.timeAmount)
+        && validMoney(data.totalAmount)
+        && data.totalAmount >= data.salesAmount + data.evaluationAmount + data.timeAmount - 0.01
+        && data.totalAmount <= data.salesAmount + data.evaluationAmount + data.timeAmount + 0.01
+        && data.source is string
+        && data.source.size() <= 160
+        && (!('sourceRecordId' in data) || (data.sourceRecordId is string && data.sourceRecordId.size() <= 160))
+        && (!('sourceCreatedAt' in data) || data.sourceCreatedAt == null || data.sourceCreatedAt is timestamp)
+        && (!('sourceUpdatedAt' in data) || data.sourceUpdatedAt == null || data.sourceUpdatedAt is timestamp)
+        && (!('importedAt' in data) || data.importedAt is timestamp)
+        && data.version is int
+        && data.version >= 1
+        && data.createdAt is timestamp
+        && data.createdBy is string
+        && data.updatedAt == request.time
+        && data.updatedBy == request.auth.uid;
+    }
+
+    function immutableServiceFields() {
+      return request.resource.data.employeeId == resource.data.employeeId
+        && request.resource.data.yearMonth == resource.data.yearMonth
+        && request.resource.data.year == resource.data.year
+        && request.resource.data.month == resource.data.month
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.createdBy == resource.data.createdBy;
+    }
+
     match /profiles/{userId} {
       allow get: if signedIn() && (request.auth.uid == userId || isAdmin());
       allow list: if isAdmin();
@@ -128,12 +194,14 @@ service cloud.firestore {
       allow delete: if isAdmin() && request.auth.uid != userId;
     }
 
+    // Collection เดิมของ Performance Summary
     match /settings/{settingId} {
       allow read: if hasActiveProfile();
       allow create, update: if isAdmin() && settingId == 'main' && validSettings(request.resource.data);
       allow delete: if false;
     }
 
+    // Employee Master กลาง และยังรองรับ Web Performance Summary เดิม
     match /employees/{employeeId} {
       allow read: if hasActiveProfile();
       allow create: if isAdmin()
@@ -162,11 +230,45 @@ service cloud.firestore {
         && (isAdmin() || (canEvaluate() && request.resource.data.version == 1));
       allow update: if validEvaluation(request.resource.data)
         && immutableEvaluationFields()
-        && (
-          isAdmin()
-          || (canEvaluate() && request.resource.data.version == resource.data.version + 1)
-        );
+        && (isAdmin() || (canEvaluate() && request.resource.data.version == resource.data.version + 1));
       allow delete: if isAdmin();
+    }
+
+    // โมดูลใหม่ Phase 1
+    match /serviceIncentives/{incentiveId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin() && validServiceIncentive(request.resource.data);
+      allow update: if isAdmin() && validServiceIncentive(request.resource.data) && immutableServiceFields();
+      allow delete: if isAdmin();
+    }
+
+    match /hubSettings/{settingId} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.updatedAt == request.time
+        && request.resource.data.updatedBy == request.auth.uid;
+      allow delete: if false;
+    }
+
+    // เตรียม Collection สำหรับ Phase 2–3 จำกัดเฉพาะ admin จนกว่าจะเพิ่ม Validation เฉพาะโมดูล
+    match /attendanceMonthly/{documentId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /leaveRecords/{documentId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /dailyPerformanceEntries/{documentId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /monthlyPerformanceOverrides/{documentId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /monthlyPerformanceStatus/{documentId} {
+      allow read, write: if isAdmin();
     }
 
     match /auditLogs/{logId} {
@@ -178,7 +280,7 @@ service cloud.firestore {
         && request.resource.data.actorId == request.auth.uid
         && request.resource.data.action is string
         && request.resource.data.action.size() >= 3
-        && request.resource.data.action.size() <= 50
+        && request.resource.data.action.size() <= 60
         && request.resource.data.targetType is string
         && request.resource.data.targetType.size() <= 40
         && request.resource.data.targetId is string

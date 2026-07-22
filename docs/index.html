@@ -1,135 +1,113 @@
 <!doctype html>
 <html lang="th">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta
-      name="description"
-      content="ระบบบันทึกและวิเคราะห์คะแนน KPI พนักงานแบบต่อเนื่องหลายปี"
-    />
-    <meta name="theme-color" content="#ecffff" />
-    <title>KPI Flow — ระบบประเมินผลพนักงาน</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700;800&display=swap"
-      rel="stylesheet"
-    />
-    <link rel="stylesheet" href="./styles.css" />
-    <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-    <script src="./firebase-config.js" defer></script>
-    <script src="./firebase-service.js" defer></script>
-    <script src="./app.js" defer></script>
-  </head>
-  <body>
-    <div class="ambient ambient-one"></div>
-    <div class="ambient ambient-two"></div>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Employee Management Hub — ระบบรวมคะแนน เวลา วันลา และเงินพิเศษ" />
+  <meta name="theme-color" content="#ecffff" />
+  <title>Employee Management Hub</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="./styles.css" />
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
+  <script src="./firebase-config.js" defer></script>
+  <script src="./firebase-service.js" defer></script>
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <div class="ambient ambient-one"></div>
+  <div class="ambient ambient-two"></div>
+  <div class="ambient ambient-three"></div>
 
-    <section id="authGate" class="auth-gate" aria-labelledby="authTitle">
-      <div class="auth-card glass-card">
-        <span class="auth-mark"><i data-lucide="chart-no-axes-combined"></i></span>
-        <p class="eyebrow">SECURE PERFORMANCE HUB</p>
-        <h1 id="authTitle">เข้าสู่ระบบ KPI Flow</h1>
-        <p id="authMessage" class="auth-message">กรุณาเข้าสู่ระบบเพื่อใช้งาน KPI Flow</p>
-        <form id="loginForm" class="login-form">
-          <div class="field">
-            <label for="loginEmail">อีเมล</label>
-            <input id="loginEmail" type="email" autocomplete="username" placeholder="name@company.com" required>
-          </div>
-          <div class="field">
-            <label for="loginPassword">รหัสผ่าน</label>
-            <input id="loginPassword" type="password" autocomplete="current-password" placeholder="รหัสผ่าน Firebase" required>
-          </div>
-          <button id="loginButton" class="button button-primary" type="submit"><i data-lucide="log-in"></i>เข้าสู่ระบบ</button>
-        </form>
-        <div id="authConfigHelp" class="auth-config-help" hidden>
-          <i data-lucide="settings-2"></i>
-          <span>ใส่ Firebase Web App config ในไฟล์ <code>docs/firebase-config.js</code></span>
+  <section id="authGate" class="auth-gate" aria-labelledby="authTitle">
+    <div class="auth-card glass-card">
+      <span class="auth-mark"><i data-lucide="building-2"></i></span>
+      <p class="eyebrow">SECURE EMPLOYEE SYSTEM</p>
+      <h1 id="authTitle">Employee Management Hub</h1>
+      <p id="authMessage" class="auth-message">เข้าสู่ระบบด้วยบัญชี Firebase เดิมของคุณ</p>
+      <form id="loginForm" class="login-form">
+        <div class="field">
+          <label for="loginEmail">อีเมล</label>
+          <input id="loginEmail" type="email" autocomplete="username" placeholder="name@company.com" required />
         </div>
-        <p class="auth-footnote"><i data-lucide="shield-check"></i>ข้อมูลได้รับการควบคุมสิทธิ์ด้วย Firebase Authentication และ Firestore Security Rules</p>
+        <div class="field">
+          <label for="loginPassword">รหัสผ่าน</label>
+          <input id="loginPassword" type="password" autocomplete="current-password" placeholder="รหัสผ่าน Firebase" required />
+        </div>
+        <button id="loginButton" class="button button-primary" type="submit">
+          <i data-lucide="log-in"></i><span>เข้าสู่ระบบ</span>
+        </button>
+      </form>
+      <div id="authConfigHelp" class="auth-config-help" hidden>
+        <i data-lucide="settings-2"></i>
+        <span>กรุณาตรวจค่า Firebase ในไฟล์ <code>docs/firebase-config.js</code></span>
       </div>
-    </section>
-
-    <div id="appShell" class="app-shell" hidden>
-      <aside class="sidebar glass-card" aria-label="เมนูหลัก">
-        <a class="brand" href="#dashboard" aria-label="KPI Flow หน้าแรก">
-          <span class="brand-mark"><i data-lucide="chart-no-axes-combined"></i></span>
-          <span>
-            <strong>KPI Flow</strong>
-            <small>Performance Hub</small>
-          </span>
-        </a>
-
-        <nav class="primary-nav">
-          <button class="nav-item active" data-view="dashboard" type="button">
-            <i data-lucide="layout-dashboard"></i><span>ภาพรวม</span>
-          </button>
-          <button class="nav-item" data-view="entry" type="button">
-            <i data-lucide="square-pen"></i><span>บันทึกคะแนน</span>
-          </button>
-          <button class="nav-item" data-view="history" type="button">
-            <i data-lucide="history"></i><span>ประวัติรายบุคคล</span>
-          </button>
-          <button class="nav-item" data-view="reports" type="button">
-            <i data-lucide="database"></i><span>รายงานและฐานข้อมูล</span>
-          </button>
-        </nav>
-
-        <div class="sidebar-foot">
-          <div class="data-status">
-            <span id="databaseStatusDot" class="status-dot status-offline"></span>
-            <span><strong>ฐานข้อมูลหลัก</strong><small id="databaseStatusLabel">Firebase Firestore</small></span>
-          </div>
-          <div class="account-card">
-            <span class="account-avatar"><i data-lucide="user-round"></i></span>
-            <span><strong id="accountName">ผู้ใช้งาน</strong><small id="accountRole">กำลังตรวจสอบสิทธิ์</small></span>
-            <button id="logoutButton" class="icon-button" type="button" aria-label="ออกจากระบบ"><i data-lucide="log-out"></i></button>
-          </div>
-          <p>ข้อมูลตั้งต้นจากแบบประเมินปี 69</p>
-        </div>
-      </aside>
-
-      <main class="main-content">
-        <header class="topbar">
-          <div>
-            <p class="eyebrow">ระบบประเมินผลการปฏิบัติงาน</p>
-            <h1 id="pageTitle">ภาพรวม KPI</h1>
-          </div>
-          <div class="topbar-actions">
-            <label class="month-control" for="globalMonth">
-              <i data-lucide="calendar-days"></i>
-              <select id="globalMonth" aria-label="เลือกเดือน"></select>
-            </label>
-            <button class="icon-button" id="notificationsButton" type="button" aria-label="การแจ้งเตือน">
-              <i data-lucide="bell"></i>
-              <span class="notification-dot" id="notificationDot"></span>
-            </button>
-            <label class="year-chip year-control" for="globalYear"><span>ปีประเมิน</span><select id="globalYear" aria-label="เลือกปีประเมิน"></select></label>
-          </div>
-        </header>
-
-        <section id="dashboardView" class="view active" aria-labelledby="pageTitle"></section>
-        <section id="entryView" class="view" aria-labelledby="pageTitle"></section>
-        <section id="historyView" class="view" aria-labelledby="pageTitle"></section>
-        <section id="reportsView" class="view" aria-labelledby="pageTitle"></section>
-      </main>
+      <p class="auth-footnote"><i data-lucide="shield-check"></i>ระบบใช้ Firebase Authentication และ Firestore Security Rules</p>
     </div>
+  </section>
 
-    <nav id="mobileNav" class="mobile-nav glass-card" aria-label="เมนูสำหรับมือถือ" hidden>
-      <button class="mobile-nav-item active" data-view="dashboard" type="button">
-        <i data-lucide="layout-dashboard"></i><span>ภาพรวม</span>
-      </button>
-      <button class="mobile-nav-item" data-view="entry" type="button">
-        <i data-lucide="square-pen"></i><span>บันทึก</span>
-      </button>
-      <button class="mobile-nav-item" data-view="history" type="button">
-        <i data-lucide="history"></i><span>ประวัติ</span>
-      </button>
-      <button class="mobile-nav-item" data-view="reports" type="button">
-        <i data-lucide="folder-down"></i><span>รายงาน</span>
-      </button>
-    </nav>
+  <div id="appShell" class="app-shell" hidden>
+    <aside class="sidebar glass-card" aria-label="เมนูหลัก">
+      <a class="brand" href="#dashboard" aria-label="Employee Management Hub หน้าแรก">
+        <span class="brand-mark"><i data-lucide="building-2"></i></span>
+        <span><strong>Employee Hub</strong><small>Management System</small></span>
+      </a>
 
-    <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
-  </body>
+      <nav class="primary-nav">
+        <button class="nav-item active" data-view="dashboard" type="button"><i data-lucide="layout-dashboard"></i><span>ภาพรวม</span></button>
+        <button class="nav-item" data-view="employees" type="button"><i data-lucide="users-round"></i><span>พนักงาน</span></button>
+        <button class="nav-item" data-view="service" type="button"><i data-lucide="badge-dollar-sign"></i><span>Service Incentive</span></button>
+        <button class="nav-item" data-view="performance" type="button"><i data-lucide="chart-no-axes-combined"></i><span>Performance Summary</span></button>
+        <button class="nav-item" data-view="workday" type="button"><i data-lucide="calendar-clock"></i><span>Workday Insight</span></button>
+        <button class="nav-item" data-view="monthly" type="button"><i data-lucide="clipboard-check"></i><span>Monthly Performance</span></button>
+        <button class="nav-item" data-view="migration" type="button"><i data-lucide="database-zap"></i><span>Migration Center</span></button>
+      </nav>
+
+      <div class="sidebar-foot">
+        <div class="data-status">
+          <span id="databaseStatusDot" class="status-dot status-offline"></span>
+          <span><strong>ฐานข้อมูลกลาง</strong><small id="databaseStatusLabel">Firebase Firestore</small></span>
+        </div>
+        <div class="account-card">
+          <span class="account-avatar"><i data-lucide="user-round"></i></span>
+          <span><strong id="accountName">ผู้ใช้งาน</strong><small id="accountRole">กำลังตรวจสอบสิทธิ์</small></span>
+          <button id="logoutButton" class="icon-button" type="button" aria-label="ออกจากระบบ"><i data-lucide="log-out"></i></button>
+        </div>
+        <p>Phase 1 · Employee Master + Service Incentive</p>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">ระบบบริหารข้อมูลพนักงานแบบรวมศูนย์</p>
+          <h1 id="pageTitle">ภาพรวมระบบ</h1>
+        </div>
+        <div class="topbar-actions">
+          <span id="syncBadge" class="sync-badge"><span class="status-dot status-offline"></span><span>กำลังเชื่อมต่อ</span></span>
+          <button id="refreshButton" class="icon-button" type="button" aria-label="โหลดข้อมูลใหม่"><i data-lucide="refresh-cw"></i></button>
+        </div>
+      </header>
+
+      <section id="dashboardView" class="view active" aria-labelledby="pageTitle"></section>
+      <section id="employeesView" class="view" aria-labelledby="pageTitle"></section>
+      <section id="serviceView" class="view" aria-labelledby="pageTitle"></section>
+      <section id="performanceView" class="view" aria-labelledby="pageTitle"></section>
+      <section id="workdayView" class="view" aria-labelledby="pageTitle"></section>
+      <section id="monthlyView" class="view" aria-labelledby="pageTitle"></section>
+      <section id="migrationView" class="view" aria-labelledby="pageTitle"></section>
+    </main>
+  </div>
+
+  <nav id="mobileNav" class="mobile-nav glass-card" aria-label="เมนูสำหรับมือถือ" hidden>
+    <button class="mobile-nav-item active" data-view="dashboard" type="button"><i data-lucide="layout-dashboard"></i><span>ภาพรวม</span></button>
+    <button class="mobile-nav-item" data-view="employees" type="button"><i data-lucide="users-round"></i><span>พนักงาน</span></button>
+    <button class="mobile-nav-item" data-view="service" type="button"><i data-lucide="badge-dollar-sign"></i><span>เงินพิเศษ</span></button>
+    <button class="mobile-nav-item" data-view="migration" type="button"><i data-lucide="database-zap"></i><span>นำเข้า</span></button>
+  </nav>
+
+  <div id="modalRoot"></div>
+  <div id="toastRegion" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+</body>
 </html>

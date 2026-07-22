@@ -1,1743 +1,41 @@
 "use strict";
 
-const MONTHS = [
-  "มกราคม",
-  "กุมภาพันธ์",
-  "มีนาคม",
-  "เมษายน",
-  "พฤษภาคม",
-  "มิถุนายน",
-  "กรกฎาคม",
-  "สิงหาคม",
-  "กันยายน",
-  "ตุลาคม",
-  "พฤศจิกายน",
-  "ธันวาคม",
-];
+const VIEW_TITLES = Object.freeze({
+  dashboard: "ภาพรวมระบบ",
+  employees: "ฐานข้อมูลพนักงานกลาง",
+  service: "Service Incentive",
+  performance: "Performance Summary",
+  workday: "Workday Insight",
+  monthly: "Monthly Performance",
+  migration: "Migration Center",
+});
 
-const SHORT_MONTHS = [
-  "ม.ค.",
-  "ก.พ.",
-  "มี.ค.",
-  "เม.ย.",
-  "พ.ค.",
-  "มิ.ย.",
-  "ก.ค.",
-  "ส.ค.",
-  "ก.ย.",
-  "ต.ค.",
-  "พ.ย.",
-  "ธ.ค.",
-];
-
-const KPI_DEFS = [
-  {
-    id: "capability",
-    title: "ความสามารถในการปฏิบัติงาน",
-    detail: "ความเหมาะสมระหว่างความยากของงานและความสามารถของผู้ปฏิบัติ",
-    weight: 5,
-    icon: "briefcase-business",
-  },
-  {
-    id: "quality",
-    title: "คุณภาพของงาน",
-    detail: "ความถูกต้อง ครบถ้วนสมบูรณ์ และประสิทธิภาพของผลงาน",
-    weight: 4,
-    icon: "badge-check",
-  },
-  {
-    id: "responsibility",
-    title: "ความรับผิดชอบต่อหน้าที่",
-    detail: "ความรับผิดชอบต่องานที่ได้รับมอบหมายและการประสานงาน",
-    weight: 3,
-    icon: "handshake",
-  },
-  {
-    id: "effort",
-    title: "ความพยายามอุตสาหะ",
-    detail: "การช่วยงานนอกเหนือหน้าที่ การเสียสละ และการอุทิศเวลา",
-    weight: 3,
-    icon: "rocket",
-  },
-  {
-    id: "punctuality",
-    title: "ความตรงต่อเวลา",
-    detail: "การขาด การลา การมาสาย และความสม่ำเสมอในการทำงาน",
-    weight: 3,
-    icon: "clock-3",
-  },
-  {
-    id: "discipline",
-    title: "การเคารพกฎระเบียบบริษัท",
-    detail: "การปฏิบัติตามคำสั่ง การแต่งกาย และบุคลิกภาพ",
-    weight: 2,
-    icon: "shield-check",
-  },
-];
-
-const SEED = [
-  ["pongsak", "พงษ์ศักดิ์ จักรพิมพ์", [[80,70,60,70,60,90],[60,70,60,80,60,90],[60,70,70,90,60,90],[100,90,60,100,60,90],[100,100,60,60,60,90],[60,70,60,60,60,90]]],
-  ["aeklerd", "เอกเลิศ ตันติยมาศ", [[60,60,70,80,100,100],[60,60,60,90,100,100],[60,60,60,90,100,100],[60,70,60,60,100,100],[60,70,90,70,100,100],[70,70,60,90,100,100]]],
-  ["somchai", "สมชาย มูลเงิน", [[60,60,60,80,90,80],[60,50,60,70,100,80],[60,60,60,70,60,80],[60,60,60,50,90,80],[60,60,60,80,100,80],[60,60,60,80,90,80]]],
-  ["kansak", "กันต์ศักดิ์ ฉลาดเฉลียว", [[60,60,60,70,90,100],[60,70,60,80,100,100],[60,100,60,80,100,100],[60,60,60,60,100,100],[60,60,60,80,90,100],[60,70,60,60,100,100]]],
-  ["kasidet", "กษิเดช อิทธิธนาบุญ", [[100,90,100,100,60,90],[60,100,100,100,60,90],[100,100,100,100,60,90],[70,60,100,70,70,90],[90,80,100,90,60,90],[60,60,80,80,60,90]]],
-  ["prawit", "ประวิทย์ ฉลาดเฉลียว", [[60,60,60,60,60,80],[60,80,60,70,70,80],[60,70,60,100,60,80],[70,80,60,60,60,80],[60,80,60,100,100,80],[60,100,70,60,80,80]]],
-  ["nattapong", "ณัฐพงษ์ กลิ่นจันทร์", [[60,70,60,100,90,100],[60,60,60,60,80,100],[60,60,60,80,80,100],[80,100,60,60,100,100],[70,80,60,70,90,100],[60,70,100,80,80,100]]],
-  ["chatchai", "ชาติชาย น่าบัณฑิต", [[60,50,70,60,100,100],[60,60,60,70,100,100],[60,60,80,100,100,100],[60,60,90,60,100,100],[60,70,60,90,100,100],[60,60,100,100,100,100]]],
-  ["thanaboon", "ธนบูรณ์ ศุภชาติสันติ", [[90,100,60,60,60,100],[60,70,60,80,70,90],[100,90,50,60,90,100],[100,90,60,60,100,100],[60,50,60,90,60,100],[100,100,60,80,80,100]]],
-  ["aphilak", "อภิลักษณ์ หาไธสง", [[60,70,60,80,80,100],[60,50,60,80,100,100],[60,60,60,100,90,100],[60,60,60,90,80,100],[60,80,60,60,100,100],[60,60,60,70,90,100]]],
-  ["phatsapong", "ภาสพงษ์ คำศรี", [[60,60,60,60,60,80],[60,60,60,60,60,80],[60,60,60,60,60,80],[60,60,60,60,60,80],[60,60,60,60,60,80],[60,60,60,60,60,80]]],
-  ["jeerasak", "จีรศักดิ์ คำศรี", [[60,60,60,70,60,90],[60,60,60,80,80,90],[60,60,60,100,70,100],[60,60,60,60,60,100],[60,60,60,60,60,100],[60,60,60,100,60,100]]],
-];
-
-const PREVIOUS_YEAR_SCORES = {
-  pongsak: 78.4090909090909,
-  aeklerd: 69.94318181818181,
-  somchai: 64.77272727272727,
-  kansak: 71.36363636363636,
-  kasidet: 85.9659090909091,
-  prawit: 69.77272727272727,
-  nattapong: 70.9659090909091,
-  chatchai: 74.0909090909091,
-  thanaboon: 73.80681818181819,
-  aphilak: 73.81,
-  phatsapong: null,
-  jeerasak: null,
+const state = {
+  user: null,
+  profile: null,
+  currentView: "dashboard",
+  loading: false,
+  employees: [],
+  incentives: [],
+  evaluationSummary: { count: 0, years: [], latestUpdatedAt: "" },
+  migrationStatus: null,
+  seed: null,
+  seedFileName: "",
+  serviceMonth: "",
+  serviceEmployeeId: "",
+  employeeSearch: "",
 };
 
-const LEGACY_STORAGE_KEY = "kpi-flow-2569-v1";
-const DEFAULT_SCORE = 60;
-const THAI_NAME_COLLATOR = new Intl.Collator("th", { sensitivity: "base", numeric: true });
-const ROLE_LABELS = Object.freeze({ viewer: "ผู้ดูรายงาน", evaluator: "ผู้ประเมิน", admin: "ผู้ดูแลระบบ" });
-
-function sortEmployeesByName(list) {
-  return [...list].sort((a, b) => THAI_NAME_COLLATOR.compare(a.name, b.name));
-}
-
-const DEFAULT_EMPLOYEES = sortEmployeesByName(SEED.map(([id, name]) => ({ id, name })));
-
-let legacyState = readLegacyState();
-let state = createInitialState();
-let employees = state.employees;
-let selectedYear = Number(state.activeYear) || 2569;
-let currentView = "dashboard";
-let selectedMonth = latestDataMonth(selectedYear);
-let selectedEmployee = employees[0]?.id || "";
-let historyEmployee = "all";
-let chartMode = "monthly";
-let chartHitRegions = [];
-let databaseStatus = "not-connected";
-let databaseMessage = "ยังไม่ได้เข้าสู่ระบบ";
-let currentUser = null;
-let currentProfile = null;
-let appInitialized = false;
-let realtimeReloadTimer = null;
-let databaseLoadPromise = null;
-
-const els = {
-  appShell: document.getElementById("appShell"),
-  mobileNav: document.getElementById("mobileNav"),
-  authGate: document.getElementById("authGate"),
-  loginForm: document.getElementById("loginForm"),
-  loginEmail: document.getElementById("loginEmail"),
-  loginPassword: document.getElementById("loginPassword"),
-  loginButton: document.getElementById("loginButton"),
-  authMessage: document.getElementById("authMessage"),
-  authConfigHelp: document.getElementById("authConfigHelp"),
-  pageTitle: document.getElementById("pageTitle"),
-  globalMonth: document.getElementById("globalMonth"),
-  globalYear: document.getElementById("globalYear"),
-  dashboard: document.getElementById("dashboardView"),
-  entry: document.getElementById("entryView"),
-  history: document.getElementById("historyView"),
-  reports: document.getElementById("reportsView"),
-  toast: document.getElementById("toastRegion"),
-  notificationDot: document.getElementById("notificationDot"),
-  databaseStatusDot: document.getElementById("databaseStatusDot"),
-  databaseStatusLabel: document.getElementById("databaseStatusLabel"),
-  accountName: document.getElementById("accountName"),
-  accountRole: document.getElementById("accountRole"),
-  logoutButton: document.getElementById("logoutButton"),
-};
-
-function recordKeyFor(year, employeeId, month) {
-  return `${year}::${employeeId}::${month}`;
-}
-
-function createInitialState() {
-  const records = {};
-  SEED.forEach(([id, , monthlyScores]) => {
-    monthlyScores.forEach((scores, month) => {
-      records[recordKeyFor(2569, id, month)] = {
-        employeeId: id,
-        month,
-        scores,
-        note: "",
-        source: "Excel: สรุปแบบประเมินปี 69.xlsx",
-        updatedAt: "2026-07-02T07:05:32.000Z",
-        version: 1,
-      };
-    });
-  });
-  return {
-    schemaVersion: 4,
-    activeYear: 2569,
-    years: [2569],
-    updatedAt: "2026-07-02T07:05:32.000Z",
-    employees: DEFAULT_EMPLOYEES.map((person) => ({ ...person })),
-    records,
-  };
-}
-
-function migrateState(saved) {
-  const savedEmployees = Array.isArray(saved?.employees)
-    ? saved.employees
-        .filter((person) => person && typeof person.id === "string" && typeof person.name === "string" && person.name.trim())
-        .map((person) => ({ id: person.id, name: person.name.trim() }))
-    : [];
-  const baseYear = Number(saved?.activeYear || saved?.year) || 2569;
-  const records = {};
-  Object.entries(saved?.records || {}).forEach(([key, record]) => {
-    if (!record || typeof record !== "object") return;
-    const parts = key.split("::");
-    const employeeId = record.employeeId || parts.at(-2) || parts[0];
-    const month = Number.isInteger(Number(record.month)) ? Number(record.month) : Number(parts.at(-1));
-    const year = parts.length === 3 && Number.isFinite(Number(parts[0])) ? Number(parts[0]) : baseYear;
-    if (!employeeId || !Number.isInteger(month)) return;
-    records[recordKeyFor(year, employeeId, month)] = {
-      employeeId,
-      month,
-      scores: Array.isArray(record.scores) ? record.scores.map(Number) : [],
-      note: String(record.note || ""),
-      source: String(record.source || "Imported data"),
-      updatedAt: String(record.updatedAt || ""),
-      version: Number(record.version) || 1,
-    };
-  });
-  const recordYears = Object.keys(records)
-    .map((key) => Number(key.split("::")[0]))
-    .filter(Number.isFinite);
-  const years = [...new Set([...(Array.isArray(saved?.years) ? saved.years.map(Number) : []), baseYear, ...recordYears])]
-    .filter(Number.isFinite)
-    .sort((a, b) => a - b);
-  return {
-    schemaVersion: 4,
-    activeYear: years.includes(baseYear) ? baseYear : years.at(-1) || 2569,
-    years,
-    updatedAt: String(saved?.updatedAt || ""),
-    employees: sortEmployeesByName(savedEmployees),
-    records,
-  };
-}
-
-function readLegacyState() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(LEGACY_STORAGE_KEY));
-    if ([1, 2, 3, 4].includes(saved?.schemaVersion) && saved.records) return migrateState(saved);
-  } catch (error) {
-    console.warn("อ่านข้อมูลเดิมในเบราว์เซอร์ไม่สำเร็จ", error);
-  }
-  return null;
-}
-
-function purgeLegacyData() {
-  localStorage.removeItem(LEGACY_STORAGE_KEY);
-  legacyState = null;
-}
-
-function recordTimestamp(record) {
-  return Date.parse(record?.updatedAt || "") || 0;
-}
-
-function mergeLegacyWithRemote(remoteState, browserState) {
-  const remote = migrateState(remoteState || createInitialState());
-  const browser = migrateState(browserState);
-  const employeeMap = new Map(remote.employees.map((person) => [person.id, person]));
-  browser.employees.forEach((person) => employeeMap.set(person.id, person));
-  const records = { ...remote.records };
-  Object.entries(browser.records).forEach(([key, record]) => {
-    const remoteRecord = records[key];
-    if (!remoteRecord || recordTimestamp(record) >= recordTimestamp(remoteRecord)) records[key] = record;
-  });
-  const years = [...new Set([...remote.years, ...browser.years].map(Number))]
-    .filter(Number.isFinite)
-    .sort((a, b) => a - b);
-  return {
-    schemaVersion: 4,
-    activeYear: Math.max(Number(remote.activeYear) || 0, Number(browser.activeYear) || 0) || years.at(-1) || 2569,
-    years,
-    updatedAt: new Date().toISOString(),
-    employees: sortEmployeesByName([...employeeMap.values()]),
-    records,
-  };
-}
-
-function legacyStateSummary() {
-  if (!legacyState) return null;
-  return {
-    employees: legacyState.employees.length,
-    records: Object.values(legacyState.records).filter((record) => validScores(record.scores)).length,
-    years: legacyState.years.length,
-  };
-}
-
-function isAdmin() {
-  return currentProfile?.role === "admin";
-}
-
-function canEditScores() {
-  return currentProfile?.role === "evaluator" || isAdmin();
-}
-
-function databaseStatusMeta() {
-  const statuses = {
-    "not-connected": { label: "ยังไม่เชื่อมต่อ", className: "status-offline" },
-    syncing: { label: "กำลังซิงก์", className: "status-syncing" },
-    connected: { label: "Firebase Firestore พร้อมใช้งาน", className: "status-connected" },
-    error: { label: "เชื่อมต่อขัดข้อง", className: "status-error" },
-  };
-  return statuses[databaseStatus] || statuses["not-connected"];
-}
-
-function updateDatabaseStatusElement() {
-  const meta = databaseStatusMeta();
-  if (els.databaseStatusDot) els.databaseStatusDot.className = `status-dot ${meta.className}`;
-  if (els.databaseStatusLabel) els.databaseStatusLabel.textContent = meta.label;
-  const badge = document.getElementById("databaseSyncBadge");
-  const message = document.getElementById("databaseSyncMessage");
-  if (badge) {
-    badge.className = `sync-badge ${meta.className}`;
-    badge.innerHTML = `<span></span>${meta.label}`;
-  }
-  if (message) message.textContent = databaseMessage;
-}
-
-function setDatabaseStatus(status, message) {
-  databaseStatus = status;
-  databaseMessage = message;
-  updateDatabaseStatusElement();
-}
-
-function refreshAfterRemoteState({ preserveSelection = false } = {}) {
-  employees = sortEmployeesByName(state.employees || []);
-  state.employees = employees;
-  if (!preserveSelection || !state.years.includes(selectedYear)) {
-    selectedYear = Number(state.activeYear) || state.years.at(-1) || 2569;
-  }
-  selectedEmployee = employees.some((person) => person.id === selectedEmployee)
-    ? selectedEmployee
-    : employees[0]?.id || "";
-  if (historyEmployee !== "all" && !employees.some((person) => person.id === historyEmployee)) historyEmployee = "all";
-  if (!preserveSelection) selectedMonth = latestDataMonth(selectedYear);
-  selectedMonth = Math.max(0, Math.min(11, Number(selectedMonth) || 0));
-  refreshDateControls();
-  updateNotificationStatus();
-  if (currentView === "dashboard") renderDashboard();
-  if (currentView === "entry") renderEntry();
-  if (currentView === "history") renderHistory();
-  if (currentView === "reports") renderReports();
-}
-
-function applyRemoteState(remoteState, options = {}) {
-  state = migrateState(remoteState);
-  refreshAfterRemoteState(options);
-}
-
-async function loadDatabaseState({ preserveSelection = false, quiet = false } = {}) {
-  if (databaseLoadPromise) return databaseLoadPromise;
-  setDatabaseStatus("syncing", quiet ? "กำลังอัปเดตข้อมูลล่าสุด" : "กำลังโหลดข้อมูลจาก Firebase Firestore");
-  databaseLoadPromise = window.KpiDatabase.loadState()
-    .then(async (remoteState) => {
-      if (!remoteState.employees.length) {
-        if (!isAdmin()) {
-          throw new Error("ฐานข้อมูลยังไม่มีข้อมูลตั้งต้น กรุณาให้ Admin เข้าสู่ระบบครั้งแรก");
-        }
-        setDatabaseStatus("syncing", "กำลังสร้างข้อมูลตั้งต้นใน Firebase Firestore");
-        await window.KpiDatabase.resetDatabase(createInitialState());
-        remoteState = await window.KpiDatabase.loadState();
-      }
-      applyRemoteState(remoteState, { preserveSelection });
-      setDatabaseStatus("connected", `ซิงก์ล่าสุด ${new Intl.DateTimeFormat("th-TH", { hour: "2-digit", minute: "2-digit" }).format(new Date())} น.`);
-      return remoteState;
-    })
-    .catch((error) => {
-      setDatabaseStatus("error", error.message);
-      if (!quiet) showToast(`โหลดฐานข้อมูลไม่สำเร็จ: ${error.message}`, "cloud-off");
-      throw error;
-    })
-    .finally(() => {
-      databaseLoadPromise = null;
-    });
-  return databaseLoadPromise;
-}
-
-async function pullFirebaseState() {
-  if (!requireDatabaseConnection()) return;
-  try {
-    await loadDatabaseState({ preserveSelection: true });
-    showToast("โหลดข้อมูลล่าสุดจาก Firebase Firestore แล้ว");
-  } catch (error) {
-    // Error is already displayed by loadDatabaseState.
-  }
-}
-
-function requireDatabaseConnection() {
-  if (currentUser && databaseStatus === "connected") return true;
-  showToast(databaseStatus === "syncing" ? "กรุณารอให้โหลดข้อมูลเสร็จก่อน" : "กรุณาเข้าสู่ระบบและเชื่อมต่อ Firebase Firestore ก่อน", "cloud-off");
-  return false;
-}
-
-async function migrateLegacyDataToFirebase() {
-  if (!legacyState) {
-    showToast("ไม่พบข้อมูลเดิมในเบราว์เซอร์", "search-x");
-    return;
-  }
-  if (!isAdmin()) {
-    showToast("เฉพาะผู้ดูแลระบบเท่านั้นที่นำเข้าข้อมูลได้", "shield-alert");
-    return;
-  }
-  if (!requireDatabaseConnection()) return;
-  const summary = legacyStateSummary();
-  const confirmed = window.confirm(
-    `ย้ายข้อมูลเดิมเข้า Firebase Firestore?\n\nพนักงาน ${summary.employees} คน · รายการคะแนน ${summary.records} รายการ · ${summary.years} ปี\n\nระบบจะเก็บรายการที่อัปเดตล่าสุด และลบข้อมูลเดิมในเบราว์เซอร์เมื่อ Firebase Firestore ยืนยันสำเร็จเท่านั้น`
-  );
-  if (!confirmed) return;
-  setDatabaseStatus("syncing", "กำลังรวมและนำเข้าข้อมูลเดิม");
-  try {
-    const merged = mergeLegacyWithRemote(state, legacyState);
-    await window.KpiDatabase.importState(merged);
-    purgeLegacyData();
-    await loadDatabaseState({ preserveSelection: true, quiet: true });
-    showToast("นำเข้าข้อมูลเดิมเข้า Firebase Firestore เรียบร้อยแล้ว");
-  } catch (error) {
-    setDatabaseStatus("error", `นำเข้าข้อมูลไม่สำเร็จ: ${error.message}`);
-    showToast("นำเข้าข้อมูลไม่สำเร็จ แต่ข้อมูลเดิมยังอยู่ในเบราว์เซอร์", "triangle-alert");
-  }
-}
-
-function updateNotificationStatus() {
-  if (!els.notificationDot || !employees.length) return;
-  els.notificationDot.hidden = monthlyResults(selectedMonth).length === employees.length;
-}
-
-function applyRolePermissions() {
-  const entryButtons = document.querySelectorAll('[data-view="entry"]');
-  entryButtons.forEach((button) => {
-    button.hidden = !canEditScores();
-    button.disabled = !canEditScores();
-  });
-  if (els.accountName) els.accountName.textContent = currentProfile?.display_name || currentUser?.email || "ผู้ใช้งาน";
-  if (els.accountRole) els.accountRole.textContent = ROLE_LABELS[currentProfile?.role] || "ผู้ใช้งาน";
-}
-
-function showAuthGate(message = "กรุณาเข้าสู่ระบบเพื่อใช้งาน KPI Flow", { configError = false } = {}) {
-  if (els.authGate) els.authGate.hidden = false;
-  if (els.appShell) els.appShell.hidden = true;
-  if (els.mobileNav) els.mobileNav.hidden = true;
-  if (els.authMessage) {
-    els.authMessage.textContent = message;
-    els.authMessage.classList.toggle("error", configError);
-  }
-  if (els.authConfigHelp) els.authConfigHelp.hidden = !configError;
-  if (els.loginForm) els.loginForm.hidden = configError;
-}
-
-function showApplication() {
-  if (els.authGate) els.authGate.hidden = true;
-  if (els.appShell) els.appShell.hidden = false;
-  if (els.mobileNav) els.mobileNav.hidden = false;
-}
-
-async function handleLoginSubmit(event) {
-  event.preventDefault();
-  const email = els.loginEmail.value.trim();
-  const password = els.loginPassword.value;
-  if (!email || !password) return;
-  els.loginButton.disabled = true;
-  els.loginButton.innerHTML = '<i data-lucide="loader-circle"></i>กำลังเข้าสู่ระบบ';
-  setIcons();
-  try {
-    await window.KpiDatabase.signIn(email, password);
-    els.loginPassword.value = "";
-    await bootstrapAuthenticatedApp();
-  } catch (error) {
-    showAuthGate("อีเมลหรือรหัสผ่านไม่ถูกต้อง");
-    if (els.authMessage) els.authMessage.classList.add("error");
-  } finally {
-    els.loginButton.disabled = false;
-    els.loginButton.innerHTML = '<i data-lucide="log-in"></i>เข้าสู่ระบบ';
-    setIcons();
-  }
-}
-
-async function bootstrapAuthenticatedApp() {
-  showAuthGate("กำลังตรวจสอบสิทธิ์และโหลดฐานข้อมูล");
-  currentUser = await window.KpiDatabase.getAuthenticatedUser();
-  if (!currentUser) {
-    currentProfile = null;
-    showAuthGate();
-    return;
-  }
-  try {
-    currentProfile = await window.KpiDatabase.getProfile(currentUser.id);
-    await loadDatabaseState();
-    if (!appInitialized) {
-      init();
-      appInitialized = true;
-    }
-    applyRolePermissions();
-    showApplication();
-    subscribeRealtime();
-  } catch (error) {
-    currentUser = null;
-    currentProfile = null;
-    showAuthGate(`เปิดระบบไม่สำเร็จ: ${error.message}`);
-    if (els.authMessage) els.authMessage.classList.add("error");
-  }
-}
-
-function subscribeRealtime() {
-  window.KpiDatabase.subscribe(() => {
-    window.clearTimeout(realtimeReloadTimer);
-    realtimeReloadTimer = window.setTimeout(() => {
-      if (currentUser) loadDatabaseState({ preserveSelection: true, quiet: true }).catch(() => undefined);
-    }, 500);
-  });
-}
-
-async function logout() {
-  try {
-    window.KpiDatabase.unsubscribe();
-    await window.KpiDatabase.signOut();
-  } catch (error) {
-    showToast(error.message, "triangle-alert");
-  } finally {
-    currentUser = null;
-    currentProfile = null;
-    setDatabaseStatus("not-connected", "ออกจากระบบแล้ว");
-    showAuthGate();
-  }
-}
-
-async function boot() {
-  setIcons();
-  els.loginForm?.addEventListener("submit", handleLoginSubmit);
-  els.logoutButton?.addEventListener("click", logout);
-  try {
-    await window.KpiDatabaseReady;
-  } catch (error) {
-    showAuthGate(`โหลด Firebase SDK ไม่สำเร็จ: ${error.message}`, { configError: true });
-    return;
-  }
-  if (!window.KpiDatabase?.isConfigured()) {
-    showAuthGate("ยังไม่ได้ตั้งค่า Firebase กรุณาแก้ไฟล์ docs/firebase-config.js", { configError: true });
-    return;
-  }
-  await bootstrapAuthenticatedApp();
-}
-
-
-function recordKey(employeeId, month) {
-  return recordKeyFor(selectedYear, employeeId, month);
-}
-
-function getRecordForYear(employeeId, month, year) {
-  return state.records[recordKeyFor(year, employeeId, month)] || null;
-}
-
-function getRecord(employeeId, month) {
-  return getRecordForYear(employeeId, month, selectedYear);
-}
-
-function validScores(scores) {
-  return Array.isArray(scores) &&
-    scores.length === KPI_DEFS.length &&
-    scores.every((score) => Number.isFinite(Number(score)) && Number(score) >= 20 && Number(score) <= 100);
-}
-
-function calculate(scores) {
-  if (!validScores(scores)) return null;
-  const weighted = scores.map((score, index) => {
-    const gpa = Number(score) / 20 - 1;
-    return { gpa, weighted: gpa * KPI_DEFS[index].weight };
-  });
-  const gpa = weighted.reduce((sum, item) => sum + item.weighted, 0) / 20;
-  return {
-    gpa,
-    percentage: gpa * 25,
-    weighted,
-  };
-}
-
-function latestDataMonth(year = selectedYear) {
-  for (let month = 11; month >= 0; month -= 1) {
-    if (employees.some((person) => validScores(getRecordForYear(person.id, month, year)?.scores))) return month;
-  }
-  return 0;
-}
-
-function annualAverageForYear(employeeId, year) {
-  const values = MONTHS.map((_, month) => calculate(getRecordForYear(employeeId, month, year)?.scores)?.percentage)
-    .filter(Number.isFinite);
-  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
-}
-
-function annualAverage(employeeId) {
-  return annualAverageForYear(employeeId, selectedYear);
-}
-
-function previousYearScoreForYear(employeeId, year) {
-  if (year - 1 === 2568) {
-    const value = PREVIOUS_YEAR_SCORES[employeeId];
-    return Number.isFinite(value) && value > 0 ? value : null;
-  }
-  return annualAverageForYear(employeeId, year - 1);
-}
-
-function previousYearScore(employeeId) {
-  return previousYearScoreForYear(employeeId, selectedYear);
-}
-
-function previousDepartmentAverage() {
-  const values = employees.map((person) => previousYearScore(person.id)).filter(Number.isFinite);
-  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
-}
-
-function yoyDelta(current, previous) {
-  return Number.isFinite(current) && Number.isFinite(previous) ? current - previous : null;
-}
-
-function formatDelta(value) {
-  if (!Number.isFinite(value)) return "ไม่มีข้อมูลเทียบ";
-  return `${value >= 0 ? "+" : ""}${formatNumber(value)} คะแนน`;
-}
-
-function monthlyResults(month) {
-  return employees
-    .map((person) => {
-      const result = calculate(getRecord(person.id, month)?.scores);
-      return result ? { ...person, ...result } : null;
-    })
-    .filter(Boolean)
-    .sort((a, b) => b.percentage - a.percentage);
-}
-
-function departmentMonthlyAverage(month) {
-  const results = monthlyResults(month);
-  return results.length
-    ? results.reduce((sum, item) => sum + item.percentage, 0) / results.length
-    : null;
-}
-
-function formatNumber(value, digits = 1) {
-  if (!Number.isFinite(value)) return "—";
-  return new Intl.NumberFormat("th-TH", {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(value);
-}
-
-function resultMeta(percentage) {
-  if (!Number.isFinite(percentage)) return { label: "ยังไม่ครบ", className: "result-improve" };
-  if (percentage >= 90) return { label: "ยอดเยี่ยม", className: "result-excellent" };
-  if (percentage >= 80) return { label: "ดีมาก", className: "result-very-good" };
-  if (percentage >= 70) return { label: "ดี", className: "result-good" };
-  if (percentage >= 60) return { label: "ผ่านเกณฑ์", className: "result-pass" };
-  return { label: "ควรปรับปรุง", className: "result-improve" };
-}
-
-function initials(name) {
-  return name.trim().split(/\s+/).map((part) => part[0]).join("").slice(0, 2);
-}
-
-function employeeOptions(selected = "") {
-  return employees
-    .map((person) => `<option value="${escapeHtml(person.id)}" ${person.id === selected ? "selected" : ""}>${escapeHtml(person.name)}</option>`)
-    .join("");
-}
-
-function latestEmployeeMonth(employeeId) {
-  for (let month = 11; month >= 0; month -= 1) {
-    if (validScores(getRecord(employeeId, month)?.scores)) return month;
-  }
-  return null;
-}
-
-function openScoreEditor(employeeId, month = null) {
-  selectedEmployee = employeeId;
-  const targetMonth = Number.isInteger(month) ? month : latestEmployeeMonth(employeeId);
-  if (Number.isInteger(targetMonth)) {
-    selectedMonth = targetMonth;
-    els.globalMonth.value = String(selectedMonth);
-  }
-  switchView("entry");
-}
-
-function employeeManagerListHtml() {
-  return employees.map((person) => {
-    const recordCount = MONTHS.filter((_, month) => validScores(getRecord(person.id, month)?.scores)).length;
-    return `<li>
-      <span class="avatar">${initials(person.name)}</span>
-      <span class="employee-manager-name"><strong>${escapeHtml(person.name)}</strong><small>${recordCount} เดือนที่มีคะแนน</small></span>
-      <button class="icon-button delete-employee" type="button" data-delete-employee="${person.id}" aria-label="ลบ ${escapeHtml(person.name)}"><i data-lucide="trash-2"></i></button>
-    </li>`;
-  }).join("");
-}
-
-function refreshEmployeeManagerList() {
-  const list = document.getElementById("employeeManagerList");
-  const count = document.getElementById("employeeManagerCount");
-  if (list) list.innerHTML = employeeManagerListHtml();
-  if (count) count.textContent = `${employees.length} คน`;
-  setIcons();
+const els = {};
+
+function cacheElements() {
+  [
+    "authGate", "authMessage", "loginForm", "loginEmail", "loginPassword", "loginButton", "authConfigHelp",
+    "appShell", "mobileNav", "pageTitle", "databaseStatusDot", "databaseStatusLabel", "accountName", "accountRole",
+    "logoutButton", "refreshButton", "syncBadge", "dashboardView", "employeesView", "serviceView", "performanceView",
+    "workdayView", "monthlyView", "migrationView", "modalRoot", "toastRegion",
+  ].forEach((id) => { els[id] = document.getElementById(id); });
 }
-
-function closeEmployeeManager() {
-  document.getElementById("employeeManagerModal")?.remove();
-}
-
-function openEmployeeManager() {
-  if (!requireDatabaseConnection()) return;
-  if (!isAdmin()) {
-    showToast("เฉพาะผู้ดูแลระบบเท่านั้นที่จัดการพนักงานได้", "shield-alert");
-    return;
-  }
-  closeEmployeeManager();
-  const modal = document.createElement("div");
-  modal.id = "employeeManagerModal";
-  modal.className = "modal-backdrop";
-  modal.innerHTML = `
-    <section class="employee-modal glass-card" role="dialog" aria-modal="true" aria-labelledby="employeeManagerTitle">
-      <div class="modal-heading">
-        <div><p class="eyebrow">TEAM DIRECTORY</p><h2 id="employeeManagerTitle">จัดการรายชื่อพนักงาน</h2></div>
-        <button class="icon-button" type="button" data-close-modal aria-label="ปิด"><i data-lucide="x"></i></button>
-      </div>
-      <form id="addEmployeeForm" class="add-employee-form">
-        <div class="field">
-          <label for="newEmployeeName">ชื่อ-นามสกุลพนักงาน</label>
-          <input id="newEmployeeName" maxlength="80" autocomplete="off" placeholder="เช่น สมศักดิ์ ใจดี" required>
-        </div>
-        <button class="button button-primary" type="submit"><i data-lucide="user-plus"></i>เพิ่มพนักงาน</button>
-      </form>
-      <div class="employee-manager-summary"><span>รายชื่อปัจจุบัน</span><strong id="employeeManagerCount">${employees.length} คน</strong></div>
-      <ul id="employeeManagerList" class="employee-manager-list">${employeeManagerListHtml()}</ul>
-      <p class="modal-note"><i data-lucide="info"></i>การลบพนักงานจะลบคะแนนของบุคคลนั้น แต่ระบบยังเก็บรายละเอียดเดิมไว้ใน Audit Log</p>
-    </section>`;
-  document.body.appendChild(modal);
-
-  modal.querySelector("[data-close-modal]").addEventListener("click", closeEmployeeManager);
-  modal.addEventListener("click", (event) => {
-    if (event.target === modal) closeEmployeeManager();
-  });
-  modal.querySelector("#addEmployeeForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const input = modal.querySelector("#newEmployeeName");
-    const submitButton = form.querySelector('button[type="submit"]');
-    const name = input.value.trim().replace(/\s+/g, " ");
-    if (name.length < 2) {
-      showToast("กรุณากรอกชื่อพนักงานให้ครบถ้วน", "triangle-alert");
-      return;
-    }
-    if (employees.some((person) => person.name.toLocaleLowerCase("th") === name.toLocaleLowerCase("th"))) {
-      showToast("มีชื่อพนักงานนี้อยู่แล้ว", "triangle-alert");
-      return;
-    }
-    const id = `employee-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
-    submitButton.disabled = true;
-    try {
-      const created = await window.KpiDatabase.addEmployee({ id, name });
-      employees = sortEmployeesByName([...employees, created]);
-      state.employees = employees;
-      selectedEmployee = id;
-      input.value = "";
-      refreshEmployeeManagerList();
-      refreshDateControls();
-      showToast(`เพิ่ม ${name} ใน Firebase Firestore แล้ว`);
-      if (currentView === "entry") renderEntry();
-    } catch (error) {
-      showToast(`เพิ่มพนักงานไม่สำเร็จ: ${error.message}`, "triangle-alert");
-    } finally {
-      submitButton.disabled = false;
-    }
-  });
-  modal.querySelector("#employeeManagerList").addEventListener("click", async (event) => {
-    const button = event.target.closest("[data-delete-employee]");
-    if (!button) return;
-    if (employees.length <= 1) {
-      showToast("ต้องมีพนักงานอย่างน้อย 1 คน", "triangle-alert");
-      return;
-    }
-    const id = button.dataset.deleteEmployee;
-    const person = employees.find((item) => item.id === id);
-    if (!person || !window.confirm(`ลบ ${person.name} และคะแนนทั้งหมดของบุคคลนี้?`)) return;
-    button.disabled = true;
-    try {
-      await window.KpiDatabase.deleteEmployee(id);
-      employees = employees.filter((item) => item.id !== id);
-      state.employees = employees;
-      state.records = Object.fromEntries(Object.entries(state.records).filter(([, record]) => record?.employeeId !== id));
-      if (selectedEmployee === id) selectedEmployee = employees[0]?.id || "";
-      if (historyEmployee === id) historyEmployee = "all";
-      refreshEmployeeManagerList();
-      refreshDateControls();
-      updateNotificationStatus();
-      showToast(`ลบ ${person.name} จาก Firebase Firestore แล้ว`);
-      if (currentView === "entry") renderEntry();
-    } catch (error) {
-      button.disabled = false;
-      showToast(`ลบพนักงานไม่สำเร็จ: ${error.message}`, "triangle-alert");
-    }
-  });
-  modal.querySelector("#newEmployeeName").focus();
-  setIcons();
-}
-
-function monthOptions(selected = 0, includeAll = false) {
-  const all = includeAll ? '<option value="all">ทุกเดือน</option>' : "";
-  return all + MONTHS.map((month, index) =>
-    `<option value="${index}" ${Number(selected) === index ? "selected" : ""}>${month} ${selectedYear}</option>`
-  ).join("");
-}
-
-function yearOptions() {
-  const years = [...new Set(state.years.map(Number))].sort((a, b) => a - b);
-  const baseOptions = years.map((year) =>
-    `<option value="${year}" ${year === selectedYear ? "selected" : ""}>พ.ศ. ${year}</option>`
-  ).join("");
-  if (!isAdmin()) return baseOptions;
-  const nextYear = Math.max(...years) + 1;
-  return baseOptions + `<option value="${nextYear}">+ เริ่มปี ${nextYear}</option>`;
-}
-
-function refreshDateControls() {
-  els.globalYear.innerHTML = yearOptions();
-  els.globalYear.value = String(selectedYear);
-  els.globalMonth.innerHTML = monthOptions(selectedMonth);
-  els.globalMonth.value = String(selectedMonth);
-}
-
-async function switchEvaluationYear(year) {
-  if (!requireDatabaseConnection()) {
-    refreshDateControls();
-    return;
-  }
-  const nextYear = Number(year);
-  if (!Number.isFinite(nextYear)) return;
-  const isNewYear = !state.years.includes(nextYear);
-  if (isNewYear && !isAdmin()) {
-    showToast("เฉพาะผู้ดูแลระบบเท่านั้นที่เริ่มปีประเมินใหม่ได้", "shield-alert");
-    refreshDateControls();
-    return;
-  }
-
-  if (isNewYear) {
-    els.globalYear.disabled = true;
-    try {
-      const settings = await window.KpiDatabase.addEvaluationYear(nextYear);
-      state.years = Array.isArray(settings?.years) ? settings.years.map(Number) : [...state.years, nextYear];
-      state.activeYear = Number(settings?.active_year) || nextYear;
-      showToast(`เริ่มปีประเมิน ${nextYear} บน Firebase Firestore แล้ว`);
-    } catch (error) {
-      showToast(`เริ่มปีใหม่ไม่สำเร็จ: ${error.message}`, "triangle-alert");
-      refreshDateControls();
-      return;
-    } finally {
-      els.globalYear.disabled = false;
-    }
-  }
-
-  selectedYear = nextYear;
-  selectedMonth = latestDataMonth(selectedYear);
-  refreshDateControls();
-  updateNotificationStatus();
-  if (currentView === "dashboard") renderDashboard();
-  if (currentView === "entry") renderEntry();
-  if (currentView === "history") renderHistory();
-  if (currentView === "reports") renderReports();
-}
-
-function setIcons() {
-  if (window.lucide) window.lucide.createIcons({ attrs: { "aria-hidden": "true" } });
-}
-
-function renderDashboard() {
-  const results = monthlyResults(selectedMonth);
-  const average = departmentMonthlyAverage(selectedMonth);
-  const previousAverage = selectedMonth > 0 ? departmentMonthlyAverage(selectedMonth - 1) : null;
-  const change = Number.isFinite(previousAverage) && Number.isFinite(average) ? average - previousAverage : null;
-  const top = results[0];
-  const completion = results.length / employees.length * 100;
-  const annualValues = employees.map((person) => annualAverage(person.id)).filter(Number.isFinite);
-  const annualDepartment = annualValues.length
-    ? annualValues.reduce((sum, value) => sum + value, 0) / annualValues.length
-    : null;
-  const previousDepartment = previousDepartmentAverage();
-  const departmentYoy = yoyDelta(annualDepartment, previousDepartment);
-
-  els.dashboard.innerHTML = `
-    <div class="hero-panel glass-card">
-      <div class="hero-copy">
-        <p class="hero-kicker">PERFORMANCE SNAPSHOT · ${SHORT_MONTHS[selectedMonth]} ${selectedYear}</p>
-        <h2>${top ? `ทีมกำลังเดินหน้าได้ดี<br>${top.name.split(" ")[0]} ทำคะแนนสูงสุดเดือนนี้` : "พร้อมเริ่มบันทึกผลการประเมินประจำเดือน"}</h2>
-        <p>${top ? `ภาพรวมแผนกอยู่ที่ ${formatNumber(average)}% จากพนักงานที่ประเมินแล้ว ${results.length} คน` : "เลือกเมนูบันทึกคะแนนเพื่อเพิ่มผลการประเมินของพนักงาน"}</p>
-      </div>
-      <div class="hero-score">
-        <strong>${formatNumber(average)}</strong>
-        <span>คะแนนเฉลี่ยแผนก / 100</span>
-      </div>
-    </div>
-
-    <div class="metric-grid">
-      ${metricCard("users-round", "tone-teal", results.length, `ประเมินแล้วจาก ${employees.length} คน`, change)}
-      ${metricCard("trophy", "tone-amber", top ? formatNumber(top.percentage) : "—", top ? `อันดับ 1 · ${top.name.split(" ")[0]}` : "ยังไม่มีอันดับ", null)}
-      ${metricCard("archive-restore", "tone-violet", formatNumber(previousDepartment), `คะแนนเฉลี่ยฐานปี ${selectedYear - 1}`, null)}
-      ${metricCard("chart-spline", "tone-rose", formatNumber(annualDepartment), `เฉลี่ยสะสม ${selectedYear} · ครบ ${formatNumber(completion, 0)}%`, departmentYoy)}
-    </div>
-
-    ${renderYearComparison()}
-
-    <div class="dashboard-grid">
-      <article class="panel glass-card chart-panel">
-        <div class="panel-heading chart-heading">
-          <div>
-            <h3>${chartMode === "monthly" ? "แนวโน้มคะแนนรายเดือน" : "เปรียบเทียบคะแนนรายปี"}</h3>
-            <p>${chartMode === "monthly" ? `ค่าเฉลี่ยแต่ละเดือนของปี ${selectedYear} เทียบกับฐานปี ${selectedYear - 1}` : `คะแนนปี ${selectedYear - 1} เทียบค่าเฉลี่ยสะสมปี ${selectedYear} แยกรายบุคคล`}</p>
-          </div>
-          <div class="segmented-control" role="group" aria-label="รูปแบบกราฟ">
-            <button class="${chartMode === "monthly" ? "active" : ""}" type="button" data-chart-mode="monthly"><i data-lucide="chart-spline"></i>รายเดือน</button>
-            <button class="${chartMode === "yearly" ? "active" : ""}" type="button" data-chart-mode="yearly"><i data-lucide="chart-column-big"></i>รายปี</button>
-          </div>
-        </div>
-        <div class="chart-wrap">
-          <canvas id="trendCanvas" aria-label="${chartMode === "monthly" ? "กราฟคะแนนเฉลี่ยรายเดือน" : "กราฟเปรียบเทียบคะแนนรายปี"}"></canvas>
-          <div id="chartTooltip" class="chart-tooltip" hidden></div>
-        </div>
-        <div class="chart-legend">
-          ${chartMode === "monthly"
-            ? `<span><i class="legend-current"></i>ค่าเฉลี่ยปี ${selectedYear}</span><span><i class="legend-baseline"></i>ค่าเฉลี่ยฐานปี ${selectedYear - 1}</span>`
-            : `<span><i class="legend-2568"></i>ปี ${selectedYear - 1}</span><span><i class="legend-2569"></i>ปี ${selectedYear} YTD</span>`}
-        </div>
-      </article>
-
-      <article class="panel glass-card">
-        <div class="panel-heading">
-          <div>
-            <h3>อันดับประจำเดือน</h3>
-            <p>${MONTHS[selectedMonth]} ${selectedYear}</p>
-          </div>
-          <i data-lucide="medal"></i>
-        </div>
-        ${results.length ? `<div class="ranking-list">${results.slice(0, 6).map((item, index) => `
-          <button class="ranking-row" type="button" data-open-employee="${item.id}">
-            <span class="rank-number">${index + 1}</span>
-            <span class="ranking-name"><strong>${escapeHtml(item.name)}</strong><span>${resultMeta(item.percentage).label}</span></span>
-            <span class="ranking-score"><strong>${formatNumber(item.percentage)}</strong><span>GPA ${formatNumber(item.gpa, 2)}</span></span>
-          </button>`).join("")}</div>` : emptyState("clipboard-list", "ยังไม่มีคะแนนในเดือนนี้")}
-      </article>
-    </div>
-
-    <article class="panel glass-card" style="margin-top:16px">
-      <div class="panel-heading">
-        <div>
-          <h3>ค่าเฉลี่ยแยกตามหัวข้อ KPI</h3>
-          <p>ใช้คะแนนดิบ 20–100 เพื่อให้เห็นจุดแข็งและโอกาสพัฒนาของทีม</p>
-        </div>
-      </div>
-      ${renderCategoryBars(selectedMonth)}
-    </article>
-  `;
-
-  document.querySelectorAll("[data-open-employee]").forEach((button) => {
-    button.addEventListener("click", () => {
-      selectedEmployee = button.dataset.openEmployee;
-      switchView("entry");
-    });
-  });
-  document.querySelectorAll("[data-chart-mode]").forEach((button) => {
-    button.addEventListener("click", () => {
-      chartMode = button.dataset.chartMode;
-      renderDashboard();
-    });
-  });
-  requestAnimationFrame(drawTrendChart);
-  setIcons();
-}
-
-function renderYearComparison() {
-  const comparable = employees
-    .map((person) => {
-      const previous = previousYearScore(person.id);
-      const current = annualAverage(person.id);
-      const delta = yoyDelta(current, previous);
-      return Number.isFinite(previous) && Number.isFinite(current)
-        ? { ...person, previous, current, delta }
-        : null;
-    })
-    .filter(Boolean)
-    .sort((a, b) => THAI_NAME_COLLATOR.compare(a.name, b.name));
-
-  return `
-    <article class="panel glass-card yoy-panel">
-      <div class="panel-heading">
-        <div>
-          <h3>เปรียบเทียบผลงานปีต่อปี</h3>
-          <p>คะแนนปี ${selectedYear - 1} เทียบกับค่าเฉลี่ยสะสมปี ${selectedYear} เฉพาะพนักงานที่มีข้อมูลทั้งสองปี</p>
-        </div>
-        <span class="weight-chip">${selectedYear - 1} → ${selectedYear}</span>
-      </div>
-      <div class="yoy-list">
-        ${comparable.map((person) => `
-          <button class="yoy-row" type="button" data-open-employee="${person.id}">
-            <span class="yoy-person"><strong>${escapeHtml(person.name)}</strong><small>${formatDelta(person.delta)}</small></span>
-            <span class="yoy-bars">
-              <span class="yoy-bar"><i class="year-2568" style="width:${person.previous}%"></i></span>
-              <span class="yoy-bar"><i class="year-2569" style="width:${person.current}%"></i></span>
-            </span>
-            <span class="yoy-values">
-              <span><small>${selectedYear - 1}</small><strong>${formatNumber(person.previous)}</strong></span>
-              <span><small>${selectedYear}</small><strong>${formatNumber(person.current)}</strong></span>
-              <span class="yoy-change ${person.delta >= 0 ? "is-up" : "is-down"}"><i data-lucide="${person.delta >= 0 ? "trending-up" : "trending-down"}"></i>${person.delta >= 0 ? "+" : ""}${formatNumber(person.delta)}</span>
-            </span>
-          </button>`).join("")}
-      </div>
-      <p class="yoy-legend"><span><i class="legend-2568"></i>ปี ${selectedYear - 1}</span><span><i class="legend-2569"></i>ปี ${selectedYear} (เฉลี่ยสะสม)</span></p>
-    </article>`;
-}
-
-function metricCard(icon, tone, value, label, change) {
-  const trend = Number.isFinite(change)
-    ? `<span class="metric-trend ${change >= 0 ? "is-up" : "is-down"}"><i data-lucide="${change >= 0 ? "trending-up" : "trending-down"}"></i>${change >= 0 ? "+" : ""}${formatNumber(change)} จุด</span>`
-    : "";
-  return `
-    <article class="metric-card glass-card">
-      <div class="metric-card-head"><span class="metric-icon ${tone}"><i data-lucide="${icon}"></i></span>${trend}</div>
-      <strong>${value}</strong><span>${label}</span>
-    </article>`;
-}
-
-function renderCategoryBars(month) {
-  const records = employees
-    .map((person) => getRecord(person.id, month))
-    .filter((record) => validScores(record?.scores));
-  if (!records.length) return emptyState("chart-bar-big", "ยังไม่มีข้อมูลสำหรับเปรียบเทียบ");
-  return `<div class="category-bars">${KPI_DEFS.map((kpi, index) => {
-    const average = records.reduce((sum, record) => sum + Number(record.scores[index]), 0) / records.length;
-    return `<div>
-      <div class="category-bar-head"><span>${kpi.title}</span><strong>${formatNumber(average)}</strong></div>
-      <div class="bar-track"><div class="bar-fill" style="width:${Math.max(0, Math.min(100, average))}%"></div></div>
-    </div>`;
-  }).join("")}</div>`;
-}
-
-function emptyState(icon, text) {
-  return `<div class="empty-state"><div><i data-lucide="${icon}"></i><p>${text}</p></div></div>`;
-}
-
-function drawTrendChart() {
-  const canvas = document.getElementById("trendCanvas");
-  if (!canvas) return;
-  const rect = canvas.getBoundingClientRect();
-  const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.max(1, rect.width * dpr);
-  canvas.height = Math.max(1, rect.height * dpr);
-  const ctx = canvas.getContext("2d");
-  ctx.scale(dpr, dpr);
-  chartHitRegions = [];
-  ctx.clearRect(0, 0, rect.width, rect.height);
-  if (chartMode === "yearly") {
-    drawYearlyChart(ctx, rect.width, rect.height);
-  } else {
-    drawMonthlyChart(ctx, rect.width, rect.height);
-  }
-  bindChartInteractions(canvas);
-}
-
-function drawChartGrid(ctx, width, height, pad) {
-  const plotH = height - pad.top - pad.bottom;
-  ctx.save();
-  ctx.font = '11px "Sarabun", sans-serif';
-  ctx.lineWidth = 1;
-  [0, 25, 50, 75, 100].forEach((tick) => {
-    const y = pad.top + (100 - tick) / 100 * plotH;
-    ctx.strokeStyle = "rgba(47, 75, 89, .08)";
-    ctx.beginPath();
-    ctx.moveTo(pad.left, y);
-    ctx.lineTo(width - pad.right, y);
-    ctx.stroke();
-    ctx.fillStyle = "#7f8e98";
-    ctx.textAlign = "right";
-    ctx.fillText(String(tick), pad.left - 8, y + 4);
-  });
-  ctx.restore();
-}
-
-function drawMonthlyChart(ctx, width, height) {
-  const pad = { top: 20, right: 20, bottom: 38, left: 42 };
-  const plotW = width - pad.left - pad.right;
-  const plotH = height - pad.top - pad.bottom;
-  const baseline = previousDepartmentAverage();
-  const values = MONTHS.map((_, index) => departmentMonthlyAverage(index));
-  drawChartGrid(ctx, width, height, pad);
-
-  if (Number.isFinite(baseline)) {
-    const baselineY = pad.top + (100 - baseline) / 100 * plotH;
-    ctx.save();
-    ctx.setLineDash([6, 5]);
-    ctx.strokeStyle = "#8467e8";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(pad.left, baselineY);
-    ctx.lineTo(width - pad.right, baselineY);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  const points = values.map((value, index) => ({
-    x: pad.left + index / 11 * plotW,
-    y: Number.isFinite(value) ? pad.top + (100 - value) / 100 * plotH : null,
-    value,
-    month: index,
-  }));
-  ctx.font = '11px "Sarabun", sans-serif';
-  ctx.textAlign = "center";
-  points.forEach((point, index) => {
-    ctx.fillStyle = "#7f8e98";
-    ctx.fillText(SHORT_MONTHS[index], point.x, height - 10);
-  });
-  const valid = points.filter((point) => point.y !== null);
-  if (!valid.length) return;
-
-  const gradient = ctx.createLinearGradient(0, pad.top, 0, height - pad.bottom);
-  gradient.addColorStop(0, "rgba(15,139,141,.28)");
-  gradient.addColorStop(1, "rgba(15,139,141,0)");
-  ctx.beginPath();
-  valid.forEach((point, index) => index ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y));
-  ctx.lineTo(valid[valid.length - 1].x, height - pad.bottom);
-  ctx.lineTo(valid[0].x, height - pad.bottom);
-  ctx.closePath();
-  ctx.fillStyle = gradient;
-  ctx.fill();
-  ctx.beginPath();
-  valid.forEach((point, index) => index ? ctx.lineTo(point.x, point.y) : ctx.moveTo(point.x, point.y));
-  ctx.strokeStyle = "#0f8b8d";
-  ctx.lineWidth = 3;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.stroke();
-
-  valid.forEach((point) => {
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, 5, 0, Math.PI * 2);
-    ctx.fillStyle = "#ffffff";
-    ctx.fill();
-    ctx.strokeStyle = "#0f8b8d";
-    ctx.lineWidth = 3;
-    ctx.stroke();
-    chartHitRegions.push({
-      kind: "point", x: point.x, y: point.y, radius: 12,
-      title: `${MONTHS[point.month]} ${selectedYear}`,
-      lines: [`เฉลี่ยแผนก ${formatNumber(point.value)}`, `ฐานปี ${selectedYear - 1} ${formatNumber(baseline)}`],
-    });
-  });
-}
-
-function drawYearlyChart(ctx, width, height) {
-  const people = employees.map((person) => ({
-    ...person,
-    previous: previousYearScore(person.id),
-    current: annualAverage(person.id),
-  })).filter((person) => Number.isFinite(person.previous) || Number.isFinite(person.current));
-  const pad = { top: 20, right: 18, bottom: width < 560 ? 76 : 54, left: 42 };
-  const plotW = width - pad.left - pad.right;
-  const plotH = height - pad.top - pad.bottom;
-  drawChartGrid(ctx, width, height, pad);
-  if (!people.length) return;
-  const groupW = plotW / people.length;
-  const barW = Math.max(5, Math.min(16, groupW * 0.28));
-  ctx.font = '10px "Sarabun", sans-serif';
-
-  people.forEach((person, index) => {
-    const center = pad.left + groupW * index + groupW / 2;
-    const bars = [
-      { year: selectedYear - 1, value: person.previous, x: center - barW - 2, color: "#b7a9e9" },
-      { year: selectedYear, value: person.current, x: center + 2, color: "#0f8b8d" },
-    ];
-    bars.forEach((bar) => {
-      if (!Number.isFinite(bar.value)) return;
-      const y = pad.top + (100 - Math.max(0, Math.min(100, bar.value))) / 100 * plotH;
-      const barHeight = height - pad.bottom - y;
-      ctx.fillStyle = bar.color;
-      ctx.beginPath();
-      ctx.roundRect(bar.x, y, barW, barHeight, [4, 4, 0, 0]);
-      ctx.fill();
-      chartHitRegions.push({
-        kind: "rect", x: bar.x, y, width: barW, height: barHeight, employeeId: person.id,
-        title: person.name, lines: [`ปี ${bar.year} · ${formatNumber(bar.value)} คะแนน`],
-      });
-    });
-    const label = person.name.split(" ")[0];
-    ctx.save();
-    ctx.fillStyle = "#6d7d88";
-    if (width < 560) {
-      ctx.translate(center + 3, height - pad.bottom + 10);
-      ctx.rotate(-Math.PI / 4);
-      ctx.textAlign = "right";
-      ctx.fillText(label, 0, 0);
-    } else {
-      ctx.textAlign = "center";
-      ctx.fillText(label, center, height - 15);
-    }
-    ctx.restore();
-  });
-}
-
-function bindChartInteractions(canvas) {
-  const tooltip = document.getElementById("chartTooltip");
-  if (!tooltip) return;
-  const findRegion = (x, y) => chartHitRegions.find((region) => {
-    if (region.kind === "point") return Math.hypot(x - region.x, y - region.y) <= region.radius;
-    return x >= region.x && x <= region.x + region.width && y >= region.y && y <= region.y + region.height;
-  });
-  canvas.onmousemove = (event) => {
-    const rect = canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    const region = findRegion(x, y);
-    if (!region) {
-      tooltip.hidden = true;
-      canvas.style.cursor = "default";
-      return;
-    }
-    tooltip.innerHTML = `<strong>${escapeHtml(region.title)}</strong>${region.lines.map((line) => `<span>${escapeHtml(line)}</span>`).join("")}`;
-    tooltip.hidden = false;
-    tooltip.style.left = `${Math.max(8, Math.min(x + 12, rect.width - 190))}px`;
-    tooltip.style.top = `${Math.max(8, y - 66)}px`;
-    canvas.style.cursor = region.employeeId ? "pointer" : "crosshair";
-  };
-  canvas.onmouseleave = () => { tooltip.hidden = true; };
-  canvas.onclick = (event) => {
-    const rect = canvas.getBoundingClientRect();
-    const region = findRegion(event.clientX - rect.left, event.clientY - rect.top);
-    if (region?.employeeId) openScoreEditor(region.employeeId);
-  };
-}
-
-function renderEntry() {
-  if (!canEditScores()) {
-    els.entry.innerHTML = `<div class="empty-state glass-card"><i data-lucide="shield-alert"></i><p>บัญชีนี้มีสิทธิ์ดูรายงานเท่านั้น</p></div>`;
-    setIcons();
-    return;
-  }
-  const person = employees.find((item) => item.id === selectedEmployee) || employees[0];
-  const record = getRecord(person.id, selectedMonth);
-  const scores = validScores(record?.scores) ? [...record.scores] : Array(KPI_DEFS.length).fill(DEFAULT_SCORE);
-  const note = record?.note || "";
-  const isEditing = Boolean(record && validScores(record.scores));
-
-  els.entry.innerHTML = `
-    <div class="entry-toolbar glass-card">
-      <div class="field-group">
-        <div class="field">
-          <label for="employeeSelect">พนักงาน</label>
-          <select id="employeeSelect" class="employee-select">${employeeOptions(person.id)}</select>
-        </div>
-        <div class="field">
-          <label for="entryMonth">เดือนประเมิน</label>
-          <select id="entryMonth">${monthOptions(selectedMonth)}</select>
-        </div>
-      </div>
-      <div class="entry-toolbar-actions">
-        <span class="record-state ${isEditing ? "editing" : "new"}"><i data-lucide="${isEditing ? "pencil-line" : "sparkles"}"></i>${isEditing ? "กำลังแก้ไขข้อมูลเดิม" : "รายการใหม่ · เริ่มต้นที่ 60"}</span>
-        ${isAdmin() ? `<button id="manageEmployees" class="button button-secondary" type="button"><i data-lucide="users-round"></i>จัดการพนักงาน</button>` : ""}
-      </div>
-    </div>
-
-    <div class="entry-layout">
-      <div class="kpi-list">
-        ${KPI_DEFS.map((kpi, index) => `
-          <article class="kpi-input-card glass-card" data-kpi-index="${index}">
-            <div class="kpi-copy">
-              <span class="kpi-icon"><i data-lucide="${kpi.icon}"></i></span>
-              <div>
-                <h3>${kpi.title}</h3>
-                <p>${kpi.detail}</p>
-                <span class="weight-chip">น้ำหนัก ${kpi.weight} คะแนน</span>
-              </div>
-            </div>
-            <div class="score-controls">
-              <input class="score-range" type="range" min="20" max="100" step="5" value="${scores[index]}" aria-label="${kpi.title}">
-              <div class="range-labels"><span>20</span><span>60</span><span>100</span></div>
-              <input class="score-number" type="number" min="20" max="100" step="5" value="${scores[index]}" aria-label="คะแนน ${kpi.title}">
-              <div class="score-meta"><span>GPA <strong data-gpa>${formatNumber(scores[index] / 20 - 1, 2)}</strong></span><span>ถ่วงน้ำหนัก <strong data-weighted>${formatNumber((scores[index] / 20 - 1) * kpi.weight, 2)}</strong></span></div>
-            </div>
-          </article>`).join("")}
-      </div>
-
-      <aside class="score-summary glass-card">
-        <div class="employee-profile">
-          <span class="avatar">${initials(person.name)}</span>
-          <span><strong>${escapeHtml(person.name)}</strong><span>${MONTHS[selectedMonth]} ${selectedYear}</span></span>
-        </div>
-        <div class="score-ring" id="scoreRing">
-          <div class="score-ring-content"><strong id="livePercentage">—</strong><span>คะแนนรวม / 100</span></div>
-        </div>
-        <span class="result-badge" id="liveResult">กำลังคำนวณ</span>
-        <div class="summary-stats">
-          <div class="summary-stat"><strong id="liveGpa">—</strong><span>GPA รวม</span></div>
-          <div class="summary-stat"><strong>20</strong><span>น้ำหนักรวม</span></div>
-        </div>
-        <div class="field note-field">
-          <label for="evaluationNote">หมายเหตุผู้ประเมิน</label>
-          <textarea id="evaluationNote" maxlength="2000" placeholder="บันทึกผลงาน จุดเด่น หรือข้อเสนอแนะ...">${escapeHtml(note)}</textarea>
-        </div>
-        <div class="form-actions">
-          <button id="saveScores" class="button button-primary" type="button"><i data-lucide="${isEditing ? "refresh-cw" : "save"}"></i>${isEditing ? "อัปเดตคะแนน" : "บันทึกคะแนน"}</button>
-          <button id="clearScores" class="button button-ghost" type="button" aria-label="ล้างฟอร์ม"><i data-lucide="rotate-ccw"></i></button>
-        </div>
-      </aside>
-    </div>
-  `;
-
-  document.getElementById("employeeSelect").addEventListener("change", (event) => {
-    selectedEmployee = event.target.value;
-    renderEntry();
-  });
-  document.getElementById("entryMonth").addEventListener("change", (event) => {
-    selectedMonth = Number(event.target.value);
-    els.globalMonth.value = String(selectedMonth);
-    renderEntry();
-  });
-  document.querySelectorAll(".kpi-input-card").forEach((card) => {
-    const range = card.querySelector(".score-range");
-    const number = card.querySelector(".score-number");
-    const sync = (source, target) => {
-      const next = Math.max(20, Math.min(100, Number(source.value) || 20));
-      source.value = String(next);
-      target.value = String(next);
-      updateLiveScore();
-    };
-    range.addEventListener("input", () => sync(range, number));
-    number.addEventListener("input", () => sync(number, range));
-  });
-  document.getElementById("manageEmployees")?.addEventListener("click", openEmployeeManager);
-  document.getElementById("saveScores").addEventListener("click", saveEntry);
-  document.getElementById("clearScores").addEventListener("click", () => {
-    document.querySelectorAll(".score-range, .score-number").forEach((input) => input.value = String(DEFAULT_SCORE));
-    document.getElementById("evaluationNote").value = "";
-    updateLiveScore();
-  });
-  updateLiveScore();
-  setIcons();
-}
-
-function entryScores() {
-  return [...document.querySelectorAll(".kpi-input-card .score-number")].map((input) => Number(input.value));
-}
-
-function updateLiveScore() {
-  const scores = entryScores();
-  const result = calculate(scores);
-  document.querySelectorAll(".kpi-input-card").forEach((card, index) => {
-    const score = scores[index];
-    card.querySelector("[data-gpa]").textContent = formatNumber(score / 20 - 1, 2);
-    card.querySelector("[data-weighted]").textContent = formatNumber((score / 20 - 1) * KPI_DEFS[index].weight, 2);
-  });
-  if (!result) return;
-  const meta = resultMeta(result.percentage);
-  document.getElementById("livePercentage").textContent = formatNumber(result.percentage);
-  document.getElementById("liveGpa").textContent = formatNumber(result.gpa, 2);
-  const badge = document.getElementById("liveResult");
-  badge.textContent = meta.label;
-  badge.className = `result-badge ${meta.className}`;
-  document.getElementById("scoreRing").style.setProperty("--score-angle", `${Math.max(0, Math.min(100, result.percentage)) * 3.6}deg`);
-}
-
-async function saveEntry() {
-  if (!requireDatabaseConnection()) return;
-  if (!canEditScores()) {
-    showToast("บัญชีนี้ไม่มีสิทธิ์บันทึกคะแนน", "shield-alert");
-    return;
-  }
-  const scores = entryScores();
-  if (!validScores(scores)) {
-    showToast("กรุณากรอกคะแนนทุกหัวข้อระหว่าง 20–100 และเพิ่มทีละ 5", "triangle-alert");
-    return;
-  }
-  const existing = getRecord(selectedEmployee, selectedMonth);
-  const saveButton = document.getElementById("saveScores");
-  saveButton.disabled = true;
-  saveButton.innerHTML = '<i data-lucide="loader-circle"></i>กำลังบันทึก';
-  setIcons();
-  try {
-    const saved = await window.KpiDatabase.saveEvaluation({
-      employeeId: selectedEmployee,
-      year: selectedYear,
-      month: selectedMonth,
-      scores,
-      note: document.getElementById("evaluationNote").value.trim(),
-      expectedVersion: Number(existing?.version) || 0,
-    });
-    state.records[recordKey(selectedEmployee, selectedMonth)] = {
-      employeeId: saved.employee_id,
-      month: Number(saved.month),
-      scores: saved.scores.map(Number),
-      note: saved.note || "",
-      source: saved.source || "KPI Flow",
-      updatedAt: saved.updated_at || new Date().toISOString(),
-      version: Number(saved.version) || 1,
-    };
-    renderEntry();
-    updateNotificationStatus();
-    showToast(`${existing ? "อัปเดต" : "บันทึก"}คะแนน ${MONTHS[selectedMonth]} บน Firebase Firestore แล้ว`);
-  } catch (error) {
-    if (error.code === "VERSION_CONFLICT" || String(error.message).includes("VERSION_CONFLICT")) {
-      showToast("ข้อมูลนี้ถูกแก้ไขจากอุปกรณ์อื่น ระบบกำลังโหลดข้อมูลล่าสุด", "refresh-cw");
-      await loadDatabaseState({ preserveSelection: true, quiet: true }).catch(() => undefined);
-    } else {
-      showToast(`บันทึกคะแนนไม่สำเร็จ: ${error.message}`, "triangle-alert");
-      saveButton.disabled = false;
-      saveButton.innerHTML = '<i data-lucide="save"></i>ลองบันทึกอีกครั้ง';
-      setIcons();
-    }
-  }
-}
-
-function renderHistory() {
-  const cards = employees.map((person) => {
-    const average = annualAverage(person.id);
-    const values = MONTHS.map((_, month) => calculate(getRecord(person.id, month)?.scores)?.percentage);
-    const completed = values.filter(Number.isFinite).length;
-    const previous = previousYearScore(person.id);
-    const delta = yoyDelta(average, previous);
-    const meta = resultMeta(average);
-    return { ...person, average, previous, delta, values, completed, meta };
-  }).sort((a, b) => THAI_NAME_COLLATOR.compare(a.name, b.name));
-
-  const selectedPeople = historyEmployee === "all"
-    ? cards
-    : cards.filter((person) => person.id === historyEmployee);
-
-  els.history.innerHTML = `
-    <div class="history-toolbar glass-card">
-      <div class="section-heading">
-        <span class="section-icon tone-violet"><i data-lucide="users"></i></span>
-        <div><h3>ผลประเมินสะสมรายบุคคล</h3><p class="section-copy">เฉลี่ยเฉพาะเดือนที่มีคะแนนครบ 6 หัวข้อ</p></div>
-      </div>
-      <div class="field">
-        <label for="historyEmployee">กรองพนักงาน</label>
-        <select id="historyEmployee"><option value="all">พนักงานทุกคน</option>${employeeOptions(historyEmployee)}</select>
-      </div>
-    </div>
-
-    <div class="history-grid">
-      ${selectedPeople.map((person, index) => `
-        <article class="person-card glass-card">
-          <div class="person-card-top">
-            <span class="avatar">${initials(person.name)}</span>
-            <span><strong>${escapeHtml(person.name)}</strong><span>เรียงตามลำดับตัวอักษร · ${person.completed} เดือน</span></span>
-          </div>
-          <div class="person-score">
-            <div><strong>${formatNumber(person.average)}</strong><span>คะแนนเฉลี่ย · ${person.completed} เดือน</span></div>
-            <div class="mini-trend" aria-label="แนวโน้มคะแนน">${person.values.map((value) => `<i style="height:${Number.isFinite(value) ? Math.max(4, value / 100 * 34) : 4}px;opacity:${Number.isFinite(value) ? 1 : .15}"></i>`).join("")}</div>
-          </div>
-          <div class="yoy-inline">
-            <span><small>ปี ${selectedYear - 1}</small><strong>${formatNumber(person.previous)}</strong></span>
-            <span><small>ผลต่าง YoY</small><strong class="${Number.isFinite(person.delta) && person.delta >= 0 ? "delta-up" : "delta-down"}">${formatDelta(person.delta)}</strong></span>
-          </div>
-          <span class="result-badge ${person.meta.className}" style="margin:14px 0 0">${person.meta.label}</span>
-          <button class="button button-ghost person-edit-button" type="button" data-edit-latest="${person.id}" ${person.completed ? "" : "disabled"}><i data-lucide="pencil-line"></i>${person.completed ? "แก้ไขคะแนนล่าสุด" : "ยังไม่มีคะแนน"}</button>
-        </article>`).join("")}
-    </div>
-
-    <article class="panel table-panel glass-card">
-      <div class="panel-heading">
-        <div><h3>ตารางคะแนนรายเดือน</h3><p>คะแนนรวมเต็ม 100</p></div>
-        <button class="button button-secondary" id="printHistory" type="button"><i data-lucide="printer"></i>พิมพ์รายงาน</button>
-      </div>
-      <div class="table-scroll">
-        <table class="data-table">
-          <thead><tr><th>พนักงาน</th><th class="numeric">${selectedYear - 1}</th><th class="numeric">${selectedYear} YTD</th><th class="numeric">ผลต่าง</th>${SHORT_MONTHS.map((month) => `<th class="numeric">${month}</th>`).join("")}</tr></thead>
-          <tbody>${selectedPeople.map((person) => `<tr>
-            <td><strong>${escapeHtml(person.name)}</strong></td>
-            <td class="numeric">${formatNumber(person.previous)}</td>
-            <td class="numeric"><span class="score-pill ${person.meta.className}">${formatNumber(person.average)}</span></td>
-            <td class="numeric"><strong class="${Number.isFinite(person.delta) && person.delta >= 0 ? "delta-up" : "delta-down"}">${Number.isFinite(person.delta) ? `${person.delta >= 0 ? "+" : ""}${formatNumber(person.delta)}` : "—"}</strong></td>
-            ${person.values.map((value, month) => `<td class="numeric">${Number.isFinite(value) ? `<button class="score-cell-button" type="button" data-edit-score="${person.id}" data-edit-month="${month}" aria-label="แก้ไขคะแนน ${MONTHS[month]} ของ ${escapeHtml(person.name)}">${formatNumber(value)}<i data-lucide="pencil"></i></button>` : "—"}</td>`).join("")}
-          </tr>`).join("")}</tbody>
-        </table>
-      </div>
-    </article>
-  `;
-
-  document.getElementById("historyEmployee").addEventListener("change", (event) => {
-    historyEmployee = event.target.value;
-    renderHistory();
-  });
-  document.querySelectorAll("[data-edit-latest]").forEach((button) => {
-    button.addEventListener("click", () => openScoreEditor(button.dataset.editLatest));
-  });
-  document.querySelectorAll("[data-edit-score]").forEach((button) => {
-    button.addEventListener("click", () => openScoreEditor(button.dataset.editScore, Number(button.dataset.editMonth)));
-  });
-  document.getElementById("printHistory").addEventListener("click", () => window.print());
-  setIcons();
-}
-
-function closeResetDialog() {
-  document.getElementById("resetPasswordModal")?.remove();
-}
-
-async function resetAllData() {
-  if (!requireDatabaseConnection()) return;
-  if (!isAdmin()) {
-    showToast("เฉพาะผู้ดูแลระบบเท่านั้นที่รีเซ็ตข้อมูลได้", "shield-alert");
-    return;
-  }
-  setDatabaseStatus("syncing", "กำลังรีเซ็ตฐานข้อมูล Firebase Firestore");
-  try {
-    await window.KpiDatabase.resetDatabase(createInitialState());
-    await loadDatabaseState({ quiet: true });
-    closeResetDialog();
-    renderReports();
-    showToast("รีเซ็ตฐานข้อมูล Firebase Firestore เรียบร้อยแล้ว");
-  } catch (error) {
-    setDatabaseStatus("error", error.message);
-    showToast(`รีเซ็ตข้อมูลไม่สำเร็จ: ${error.message}`, "triangle-alert");
-  }
-}
-
-function openResetDialog() {
-  if (!requireDatabaseConnection()) return;
-  if (!isAdmin()) {
-    showToast("เฉพาะผู้ดูแลระบบเท่านั้นที่รีเซ็ตข้อมูลได้", "shield-alert");
-    return;
-  }
-  closeResetDialog();
-  const modal = document.createElement("div");
-  modal.id = "resetPasswordModal";
-  modal.className = "modal-backdrop";
-  modal.innerHTML = `
-    <section class="employee-modal reset-modal glass-card" role="dialog" aria-modal="true" aria-labelledby="resetDialogTitle">
-      <div class="modal-heading">
-        <div><p class="eyebrow">ADMIN CONFIRMATION</p><h2 id="resetDialogTitle">ยืนยันก่อนรีเซ็ตข้อมูล</h2></div>
-        <button class="icon-button" type="button" data-close-reset aria-label="ปิด"><i data-lucide="x"></i></button>
-      </div>
-      <p class="reset-warning"><i data-lucide="triangle-alert"></i>การรีเซ็ตจะลบข้อมูลทุกปีและกลับไปใช้ข้อมูลตั้งต้นจาก Excel</p>
-      <form id="resetPasswordForm">
-        <div class="field password-field">
-          <label for="resetConfirmation">พิมพ์คำว่า RESET เพื่อยืนยัน</label>
-          <input id="resetConfirmation" autocomplete="off" placeholder="RESET" required>
-        </div>
-        <p id="resetPasswordError" class="form-error" hidden>กรุณาพิมพ์ RESET ให้ถูกต้อง</p>
-        <button class="button button-danger" type="submit"><i data-lucide="rotate-ccw"></i>ยืนยันรีเซ็ตข้อมูล</button>
-      </form>
-      <p class="modal-note"><i data-lucide="shield-check"></i>Firebase Firestore ตรวจสิทธิ์ Admin ที่ฐานข้อมูลอีกครั้งก่อนดำเนินการ</p>
-    </section>`;
-  document.body.appendChild(modal);
-  modal.querySelector("[data-close-reset]").addEventListener("click", closeResetDialog);
-  modal.addEventListener("click", (event) => { if (event.target === modal) closeResetDialog(); });
-  modal.querySelector("#resetPasswordForm").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const input = modal.querySelector("#resetConfirmation");
-    const error = modal.querySelector("#resetPasswordError");
-    if (input.value.trim().toUpperCase() !== "RESET") {
-      error.hidden = false;
-      input.select();
-      return;
-    }
-    error.hidden = true;
-    if (window.confirm("ยืนยันลบข้อมูลทุกปีและกลับเป็นข้อมูลตั้งต้น?")) await resetAllData();
-  });
-  modal.querySelector("#resetConfirmation").focus();
-  setIcons();
-}
-
-function exportYearOptions() {
-  return `<option value="${selectedYear}">ปี ${selectedYear}</option>` +
-    state.years
-      .filter((year) => Number(year) !== selectedYear)
-      .sort((a, b) => a - b)
-      .map((year) => `<option value="${year}">ปี ${year}</option>`)
-      .join("") +
-    '<option value="all">ทุกปี</option>';
-}
-
-function exportMonthOptions(selectedMonthIndex) {
-  return MONTHS.map((month, index) =>
-    `<option value="${index}" ${index === selectedMonthIndex ? "selected" : ""}>${month}</option>`
-  ).join("");
-}
-
-function legacyMigrationPanel() {
-  const summary = legacyStateSummary();
-  if (!summary || !isAdmin()) return "";
-  const canMigrate = databaseStatus === "connected";
-  return `<div class="notice-panel legacy-migration-panel glass-card">
-    <i data-lucide="archive-restore"></i>
-    <div><strong>พบข้อมูลเดิมในเบราว์เซอร์</strong>
-      <span>พนักงาน ${summary.employees} คน · รายการคะแนน ${summary.records} รายการ · ${summary.years} ปี ข้อมูลนี้จะยังไม่ถูกลบจนกว่า Firebase Firestore จะยืนยันสำเร็จ</span>
-    </div>
-    <button class="button button-primary" id="migrateLegacyData" type="button" ${canMigrate ? "" : "disabled"}><i data-lucide="cloud-upload"></i>ย้ายข้อมูลเดิมเข้า Firebase Firestore</button>
-  </div>`;
-}
-
-function googleConnectionCard() {
-  const meta = databaseStatusMeta();
-  return `<article class="report-card glass-card database-card">
-    <span class="report-icon tone-blue"><i data-lucide="database-zap"></i></span>
-    <h3>Firebase Firestore Database</h3>
-    <p id="databaseSyncMessage">${escapeHtml(databaseMessage)}</p>
-    <div class="database-card-actions">
-      <span id="databaseSyncBadge" class="sync-badge ${meta.className}"><span></span>${meta.label}</span>
-      <button class="button button-secondary" id="reloadDatabase" type="button" ${databaseStatus === "syncing" ? "disabled" : ""}><i data-lucide="refresh-cw"></i>โหลดข้อมูลล่าสุด</button>
-    </div>
-  </article>`;
-}
-
-function renderReports() {
-  const recordCount = Object.values(state.records).filter((record) => validScores(record.scores)).length;
-  const databaseReady = databaseStatus === "connected";
-  const connectionCard = googleConnectionCard();
-  const databaseNotice = databaseReady
-    ? `ข้อมูลพนักงาน คะแนน และประวัติอ่านจาก Firebase Firestore โดยบันทึกเฉพาะรายการที่เปลี่ยน ปัจจุบันมีรายการประเมินสมบูรณ์ ${recordCount} รายการ`
-    : databaseMessage;
-  els.reports.innerHTML = `
-    <div class="report-grid">
-      <article class="report-card export-range-card glass-card">
-        <span class="report-icon tone-teal"><i data-lucide="file-spreadsheet"></i></span>
-        <h3>ส่งออก CSV ตามช่วงเดือน</h3>
-        <p>เลือกปี เดือนเริ่มต้น และเดือนสิ้นสุดก่อนดาวน์โหลดไปใช้ใน Excel หรือ Google Sheets</p>
-        <div class="export-filter-grid">
-          <label>ปี<select id="exportYear">${exportYearOptions()}</select></label>
-          <label>ตั้งแต่<select id="exportStartMonth">${exportMonthOptions(0)}</select></label>
-          <label>ถึง<select id="exportEndMonth">${exportMonthOptions(selectedMonth)}</select></label>
-        </div>
-        <button class="button button-secondary" id="exportCsv" type="button" ${databaseReady ? "" : "disabled"}><i data-lucide="file-down"></i>ดาวน์โหลด CSV</button>
-      </article>
-      ${connectionCard}
-    </div>
-
-    ${legacyMigrationPanel()}
-
-    <div class="notice-panel glass-card">
-      <i data-lucide="${databaseReady ? "shield-check" : "cloud-off"}"></i>
-      <div><strong>${databaseReady ? "เชื่อมต่อ Firebase Authentication และ Security Rules แล้ว" : "การเชื่อมต่อฐานข้อมูลขัดข้อง"}</strong><span>${escapeHtml(databaseNotice)}</span></div>
-    </div>
-
-    <div class="notice-panel glass-card">
-      <i data-lucide="git-compare-arrows"></i>
-      <div><strong>ฐานเปรียบเทียบปี ${selectedYear - 1}</strong><span>${selectedYear === 2569 ? "ปีแรกใช้คะแนนย้อนหลังจาก Excel จำนวน 10 คน" : `ใช้ค่าเฉลี่ยสะสมของปี ${selectedYear - 1} เป็นฐานอัตโนมัติ`} รายการที่ไม่มีข้อมูลจะไม่ถูกนำไปเฉลี่ย</span></div>
-    </div>
-
-    <article class="formula-card glass-card">
-      <div class="section-heading">
-        <span class="section-icon tone-teal"><i data-lucide="calculator"></i></span>
-        <div><h3>หลักการคำนวณที่ถอดจากไฟล์ Excel</h3><p class="section-copy">รักษาน้ำหนักและสูตรเดิม พร้อมแก้การเฉลี่ยเดือนว่างให้ถูกต้อง</p></div>
-      </div>
-      <div class="formula-flow">
-        <div class="formula-step"><strong>1 · คะแนนดิบ</strong><span>กรอก 20–100 เพิ่มทีละ 5</span></div>
-        <div class="formula-step"><strong>2 · แปลง GPA</strong><span>คะแนน ÷ 20 − 1</span></div>
-        <div class="formula-step"><strong>3 · ถ่วงน้ำหนัก</strong><span>GPA × น้ำหนัก รวม 20</span></div>
-        <div class="formula-step"><strong>4 · คะแนนรวม</strong><span>GPA รวม × 25 = ร้อยละ</span></div>
-      </div>
-    </article>
-
-    ${isAdmin() ? `<div class="notice-panel glass-card">
-      <i data-lucide="triangle-alert"></i>
-      <div><strong>เริ่มใหม่จากไฟล์ต้นฉบับ</strong><span>เฉพาะ Admin เท่านั้น การรีเซ็ตทำเป็นชุดคำสั่งที่จำกัดสิทธิ์และบันทึก Audit Log</span></div>
-      <button class="button button-danger" id="resetData" type="button" ${databaseReady ? "" : "disabled"}><i data-lucide="rotate-ccw"></i>รีเซ็ตข้อมูล</button>
-    </div>` : ""}
-  `;
-
-  document.getElementById("exportCsv")?.addEventListener("click", exportCsv);
-  document.getElementById("resetData")?.addEventListener("click", openResetDialog);
-  document.getElementById("migrateLegacyData")?.addEventListener("click", migrateLegacyDataToFirebase);
-  document.getElementById("reloadDatabase")?.addEventListener("click", pullFirebaseState);
-  updateDatabaseStatusElement();
-  setIcons();
-}
-
-function reportCard(icon, tone, title, copy, id, buttonText) {
-  return `<article class="report-card glass-card">
-    <span class="report-icon ${tone}"><i data-lucide="${icon}"></i></span>
-    <h3>${title}</h3><p>${copy}</p>
-    <button class="button button-secondary" id="${id}" type="button"><i data-lucide="${icon}"></i>${buttonText}</button>
-  </article>`;
-}
-
-function exportCsv() {
-  if (!requireDatabaseConnection()) return;
-  const yearValue = document.getElementById("exportYear").value;
-  const startMonth = Number(document.getElementById("exportStartMonth").value);
-  const endMonth = Number(document.getElementById("exportEndMonth").value);
-  if (!Number.isInteger(startMonth) || !Number.isInteger(endMonth) || startMonth > endMonth) {
-    showToast("เดือนเริ่มต้นต้องไม่เกินเดือนสิ้นสุด", "triangle-alert");
-    return;
-  }
-
-  const exportYears = yearValue === "all"
-    ? [...state.years].map(Number).sort((a, b) => a - b)
-    : [Number(yearValue)];
-  const header = ["ปี", "เดือน", "พนักงาน", "คะแนนปีก่อน", "ค่าเฉลี่ยสะสมปีปัจจุบัน", "ผลต่าง YoY", ...KPI_DEFS.map((item) => item.title), "GPA รวม", "คะแนนรวม", "ผลประเมิน", "หมายเหตุ"];
-  const rows = [header];
-
-  exportYears.forEach((year) => {
-    employees.forEach((person) => {
-      const previous = previousYearScoreForYear(person.id, year);
-      const currentYtd = annualAverageForYear(person.id, year);
-      const delta = yoyDelta(currentYtd, previous);
-      for (let month = startMonth; month <= endMonth; month += 1) {
-        const record = getRecordForYear(person.id, month, year);
-        const result = calculate(record?.scores);
-        if (!result) continue;
-        rows.push([
-          year,
-          MONTHS[month],
-          person.name,
-          Number.isFinite(previous) ? previous.toFixed(2) : "",
-          Number.isFinite(currentYtd) ? currentYtd.toFixed(2) : "",
-          Number.isFinite(delta) ? delta.toFixed(2) : "",
-          ...record.scores,
-          result.gpa.toFixed(2),
-          result.percentage.toFixed(2),
-          resultMeta(result.percentage).label,
-          record.note || "",
-        ]);
-      }
-    });
-  });
-
-  if (rows.length === 1) {
-    showToast("ไม่พบคะแนนในปีและช่วงเดือนที่เลือก", "search-x");
-    return;
-  }
-
-  const csv = "\uFEFF" + rows.map((row) => row.map(csvCell).join(",")).join("\r\n");
-  const yearLabel = yearValue === "all" ? "all-years" : yearValue;
-  const filename = `kpi-flow-${yearLabel}-month-${String(startMonth + 1).padStart(2, "0")}-to-${String(endMonth + 1).padStart(2, "0")}.csv`;
-  downloadBlob(new Blob([csv], { type: "text/csv;charset=utf-8" }), filename);
-  showToast(`ดาวน์โหลด CSV เดือน${MONTHS[startMonth]}–${MONTHS[endMonth]}แล้ว`);
-}
-
-function csvCell(value) {
-  let text = String(value ?? "");
-  if (/^[=+\-@]/.test(text)) text = `'${text}`;
-  return /[",\r\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
-}
-
-
-
-function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  link.click();
-  URL.revokeObjectURL(url);
-}
-
-
 
 function escapeHtml(value) {
   return String(value ?? "")
@@ -1748,76 +46,683 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
-function showToast(message, icon = "circle-check-big") {
-  const toast = document.createElement("div");
-  toast.className = "toast";
-  toast.innerHTML = `<i data-lucide="${icon}"></i><span>${escapeHtml(message)}</span>`;
-  els.toast.appendChild(toast);
-  setIcons();
-  window.setTimeout(() => toast.remove(), 3600);
+function formatMoney(value) {
+  return new Intl.NumberFormat("th-TH", { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(Number(value) || 0);
 }
 
-function switchView(view) {
-  if (!currentUser || databaseStatus !== "connected") {
-    showToast("กรุณาเข้าสู่ระบบและรอให้โหลดฐานข้อมูลเสร็จก่อน", "cloud-off");
-    return;
-  }
-  if (view === "entry" && !canEditScores()) {
-    showToast("บัญชีนี้มีสิทธิ์ดูรายงานเท่านั้น", "shield-alert");
-    view = "dashboard";
-  }
-  currentView = view;
-  const titleMap = {
-    dashboard: "ภาพรวม KPI",
-    entry: "บันทึกคะแนนพนักงาน",
-    history: "ประวัติและผลงานรายบุคคล",
-    reports: "รายงานและฐานข้อมูล",
-  };
-  els.pageTitle.textContent = titleMap[view];
-  document.querySelectorAll(".view").forEach((section) => section.classList.remove("active"));
-  document.getElementById(`${view}View`).classList.add("active");
-  document.querySelectorAll("[data-view]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.view === view);
-  });
-  if (view === "dashboard") renderDashboard();
-  if (view === "entry") renderEntry();
-  if (view === "history") renderHistory();
-  if (view === "reports") renderReports();
-  window.location.hash = view;
+function formatDate(value) {
+  if (!value) return "-";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return String(value);
+  return new Intl.DateTimeFormat("th-TH", { dateStyle: "medium", timeStyle: "short" }).format(parsed);
+}
+
+function currentYearMonth() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function employeeMap() {
+  return new Map(state.employees.map((employee) => [employee.id, employee]));
+}
+
+function activeEmployees() {
+  return state.employees.filter((employee) => employee.isActive);
+}
+
+function getLatestIncentiveMonth() {
+  return state.incentives.map((record) => record.yearMonth).filter(Boolean).sort().at(-1) || currentYearMonth();
+}
+
+function recordsForMonth(yearMonth) {
+  return state.incentives.filter((record) => record.yearMonth === yearMonth);
+}
+
+function sumRecords(records) {
+  return records.reduce((total, record) => ({
+    salesAmount: total.salesAmount + record.salesAmount,
+    evaluationAmount: total.evaluationAmount + record.evaluationAmount,
+    timeAmount: total.timeAmount + record.timeAmount,
+    totalAmount: total.totalAmount + record.totalAmount,
+  }), { salesAmount: 0, evaluationAmount: 0, timeAmount: 0, totalAmount: 0 });
+}
+
+function ensureIcons() {
+  if (window.lucide) window.lucide.createIcons({ attrs: { "stroke-width": 1.9 } });
+}
+
+function setSyncStatus(status, label) {
+  const classes = ["status-online", "status-syncing", "status-offline", "status-error"];
+  els.databaseStatusDot.classList.remove(...classes);
+  els.databaseStatusDot.classList.add(`status-${status}`);
+  els.databaseStatusLabel.textContent = label;
+  const badgeDot = els.syncBadge.querySelector(".status-dot");
+  badgeDot.classList.remove(...classes);
+  badgeDot.classList.add(`status-${status}`);
+  els.syncBadge.querySelector("span:last-child").textContent = label;
+}
+
+function setBusy(isBusy, label = "กำลังโหลดข้อมูล") {
+  state.loading = isBusy;
+  els.refreshButton.disabled = isBusy;
+  els.refreshButton.querySelector("svg")?.classList.toggle("spin", isBusy);
+  setSyncStatus(isBusy ? "syncing" : "online", isBusy ? label : "เชื่อมต่อแล้ว");
+}
+
+function showToast(message, type = "success", timeout = 4200) {
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+  const icon = type === "error" ? "circle-alert" : type === "warning" ? "triangle-alert" : "circle-check";
+  toast.innerHTML = `<i data-lucide="${icon}"></i><div>${escapeHtml(message)}</div>`;
+  els.toastRegion.appendChild(toast);
+  ensureIcons();
+  window.setTimeout(() => toast.remove(), timeout);
+}
+
+function showAuthMessage(message, isError = false) {
+  els.authMessage.textContent = message;
+  els.authMessage.style.color = isError ? "var(--danger)" : "var(--muted)";
+}
+
+function setVisibleApp(isVisible) {
+  els.authGate.hidden = isVisible;
+  els.appShell.hidden = !isVisible;
+  els.mobileNav.hidden = !isVisible;
+}
+
+function showView(viewName) {
+  if (!VIEW_TITLES[viewName]) return;
+  state.currentView = viewName;
+  els.pageTitle.textContent = VIEW_TITLES[viewName];
+  document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
+  document.getElementById(`${viewName}View`)?.classList.add("active");
+  document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === viewName));
+  window.location.hash = viewName;
+  renderCurrentView();
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
-function init() {
-  refreshDateControls();
-  els.globalYear.addEventListener("change", (event) => switchEvaluationYear(event.target.value));
-  els.globalMonth.addEventListener("change", (event) => {
-    selectedMonth = Number(event.target.value);
-    updateNotificationStatus();
-    if (currentView === "dashboard") renderDashboard();
-    if (currentView === "entry") renderEntry();
-  });
-  document.querySelectorAll("[data-view]").forEach((button) => {
-    button.addEventListener("click", () => switchView(button.dataset.view));
-  });
-  document.getElementById("notificationsButton").addEventListener("click", () => {
-    const missing = employees.length - monthlyResults(selectedMonth).length;
-    showToast(missing > 0 ? `เดือนนี้ยังขาดผลประเมิน ${missing} คน` : "บันทึกคะแนนครบทุกคนแล้ว", missing > 0 ? "bell-ring" : "circle-check-big");
-  });
-  document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      closeEmployeeManager();
-      closeResetDialog();
-    }
-  });
-  window.addEventListener("resize", () => {
-    if (currentView === "dashboard") drawTrendChart();
-  });
-
-  const hashView = window.location.hash.replace("#", "");
-  const requestedView = ["dashboard", "entry", "history", "reports"].includes(hashView) ? hashView : "dashboard";
-  const initialView = requestedView === "entry" && !canEditScores() ? "dashboard" : requestedView;
-  updateNotificationStatus();
-  switchView(initialView);
+async function refreshData({ quiet = false } = {}) {
+  if (!state.user) return;
+  if (!quiet) setBusy(true);
+  try {
+    const snapshot = await window.EmployeeHubDatabase.loadHubSnapshot("");
+    state.employees = snapshot.employees;
+    state.incentives = snapshot.incentives;
+    state.evaluationSummary = snapshot.evaluationSummary;
+    state.migrationStatus = snapshot.migrationStatus;
+    if (!state.serviceMonth) state.serviceMonth = getLatestIncentiveMonth();
+    setSyncStatus("online", "เชื่อมต่อแล้ว");
+    renderCurrentView();
+  } catch (error) {
+    console.error(error);
+    setSyncStatus("error", "โหลดข้อมูลไม่สำเร็จ");
+    if (!quiet) showToast(error.message || "โหลดข้อมูลไม่สำเร็จ", "error");
+  } finally {
+    state.loading = false;
+    els.refreshButton.disabled = false;
+  }
 }
 
-window.addEventListener("DOMContentLoaded", boot);
+function renderCurrentView() {
+  const renderers = {
+    dashboard: renderDashboard,
+    employees: renderEmployees,
+    service: renderService,
+    performance: renderPerformance,
+    workday: renderWorkday,
+    monthly: renderMonthly,
+    migration: renderMigration,
+  };
+  renderers[state.currentView]?.();
+  ensureIcons();
+}
+
+function moduleCard({ icon, title, description, status, statusClass, view }) {
+  return `
+    <article class="module-card">
+      <div class="module-card-top">
+        <span class="module-icon"><i data-lucide="${icon}"></i></span>
+        <span class="badge ${statusClass}">${escapeHtml(status)}</span>
+      </div>
+      <div><h3>${escapeHtml(title)}</h3><p>${escapeHtml(description)}</p></div>
+      <button class="button button-ghost button-small" data-view="${view}" type="button">เปิดโมดูล <i data-lucide="arrow-right"></i></button>
+    </article>`;
+}
+
+function renderDashboard() {
+  const month = state.serviceMonth || getLatestIncentiveMonth();
+  const monthRecords = recordsForMonth(month);
+  const totals = sumRecords(monthRecords);
+  const activeCount = activeEmployees().length;
+  const migrationReady = Boolean(state.migrationStatus);
+  const employeesById = employeeMap();
+  const topRows = [...monthRecords]
+    .sort((a, b) => b.totalAmount - a.totalAmount)
+    .slice(0, 5);
+  const maxTop = Math.max(1, ...topRows.map((row) => Math.abs(row.totalAmount)));
+
+  els.dashboardView.innerHTML = `
+    <div class="page-grid">
+      <div class="kpi-grid">
+        <article class="kpi-card">
+          <div class="kpi-head"><span>พนักงานใช้งาน</span><span class="kpi-icon"><i data-lucide="users-round"></i></span></div>
+          <div class="kpi-value">${activeCount}</div><div class="kpi-note">จากฐานข้อมูลกลางทั้งหมด ${state.employees.length} คน</div>
+        </article>
+        <article class="kpi-card">
+          <div class="kpi-head"><span>Service Incentive ${escapeHtml(month)}</span><span class="kpi-icon"><i data-lucide="badge-dollar-sign"></i></span></div>
+          <div class="kpi-value ${totals.totalAmount < 0 ? "negative" : ""}">${formatMoney(totals.totalAmount)}</div><div class="kpi-note">${monthRecords.length} รายการ</div>
+        </article>
+        <article class="kpi-card">
+          <div class="kpi-head"><span>Performance Summary</span><span class="kpi-icon"><i data-lucide="chart-no-axes-combined"></i></span></div>
+          <div class="kpi-value">${state.evaluationSummary.count}</div><div class="kpi-note">ข้อมูลประเมินใน Firestore</div>
+        </article>
+        <article class="kpi-card">
+          <div class="kpi-head"><span>Migration Phase 1</span><span class="kpi-icon"><i data-lucide="database-zap"></i></span></div>
+          <div class="kpi-value">${migrationReady ? "พร้อม" : "รอ"}</div><div class="kpi-note">${migrationReady ? `นำเข้า ${formatDate(state.migrationStatus.importedAt)}` : "เปิด Migration Center เพื่อนำเข้าข้อมูล"}</div>
+        </article>
+      </div>
+
+      <div class="module-grid">
+        ${moduleCard({ icon: "users-round", title: "Employee Master", description: "รายชื่อ รหัสพนักงาน วันที่เริ่มงาน และ Legacy IDs", status: state.employees.length ? "เชื่อมต่อแล้ว" : "รอนำเข้า", statusClass: state.employees.length ? "badge-ready" : "badge-progress", view: "employees" })}
+        ${moduleCard({ icon: "badge-dollar-sign", title: "Service Incentive", description: "บันทึกยอดขาย ประเมิน เวลา และยอดรวมรายเดือน", status: state.incentives.length ? "ใช้งานได้" : "รอนำเข้า", statusClass: state.incentives.length ? "badge-ready" : "badge-progress", view: "service" })}
+        ${moduleCard({ icon: "chart-no-axes-combined", title: "Performance Summary", description: "ฐานข้อมูล Firebase เดิมยังทำงานปกติ เตรียมรวม UI ในระยะถัดไป", status: "เชื่อมฐานข้อมูลแล้ว", statusClass: "badge-ready", view: "performance" })}
+        ${moduleCard({ icon: "calendar-clock", title: "Workday Insight", description: "เวลาสาย วันลา และสิทธิ์ลาคงเหลือ", status: "Phase 2", statusClass: "badge-planned", view: "workday" })}
+        ${moduleCard({ icon: "clipboard-check", title: "Monthly Performance", description: "คะแนนรายวัน สถานะการทำงาน และการปิดเดือน", status: "Phase 3", statusClass: "badge-planned", view: "monthly" })}
+        ${moduleCard({ icon: "database-zap", title: "Migration Center", description: "นำเข้า Employee Master และ Service Incentive แบบตรวจสอบได้", status: migrationReady ? "นำเข้าแล้ว" : "พร้อมนำเข้า", statusClass: migrationReady ? "badge-ready" : "badge-progress", view: "migration" })}
+      </div>
+
+      <div class="split-grid">
+        <article class="panel">
+          <div class="panel-head"><div><h2>สรุป Service Incentive</h2><p>ข้อมูลเดือน ${escapeHtml(month)}</p></div><button class="button button-secondary button-small" data-view="service" type="button">จัดการข้อมูล</button></div>
+          <div class="progress-list">
+            ${[
+              ["ขายของ", totals.salesAmount, "#"], ["ประเมิน", totals.evaluationAmount, "#"], ["เวลา", totals.timeAmount, "#"],
+            ].map(([label, amount]) => `
+              <div class="progress-row"><span>${label}</span><div class="progress-track"><div class="progress-bar" style="width:${Math.min(100, Math.abs(amount) / Math.max(1, Math.abs(totals.totalAmount), Math.abs(amount)) * 100)}%"></div></div><strong class="${amount < 0 ? "negative" : ""}">${formatMoney(amount)}</strong></div>`).join("")}
+          </div>
+        </article>
+        <article class="panel">
+          <div class="panel-head"><div><h2>Top 5 ประจำเดือน</h2><p>เรียงตามยอดรวม Service Incentive</p></div></div>
+          ${topRows.length ? `<div class="progress-list">${topRows.map((row) => {
+            const employee = employeesById.get(row.employeeId);
+            return `<div class="progress-row"><span>${escapeHtml(employee?.fullName || row.employeeId)}</span><div class="progress-track"><div class="progress-bar" style="width:${Math.min(100, Math.abs(row.totalAmount) / maxTop * 100)}%"></div></div><strong class="${row.totalAmount < 0 ? "negative" : ""}">${formatMoney(row.totalAmount)}</strong></div>`;
+          }).join("")}</div>` : `<div class="empty-state"><i data-lucide="inbox"></i><p>ยังไม่มีข้อมูลเดือนนี้</p></div>`}
+        </article>
+      </div>
+    </div>`;
+}
+
+function renderEmployees() {
+  const query = state.employeeSearch.trim().toLocaleLowerCase("th");
+  const rows = state.employees;
+  const visibleCount = rows.filter((employee) => {
+    if (!query) return true;
+    return `${employee.employeeCode} ${employee.fullName}`.toLocaleLowerCase("th").includes(query);
+  }).length;
+
+  els.employeesView.innerHTML = `
+    <div class="page-grid">
+      <article class="panel">
+        <div class="panel-head">
+          <div><h2>Employee Master</h2><p>รหัสกลางที่ทุกโมดูลจะใช้ร่วมกัน</p></div>
+          <div class="panel-actions"><button id="addEmployeeButton" class="button button-primary" type="button"><i data-lucide="user-plus"></i>เพิ่มพนักงาน</button></div>
+        </div>
+        <div class="toolbar"><input id="employeeSearch" class="toolbar-grow" type="search" placeholder="ค้นหาชื่อหรือรหัสพนักงาน" value="${escapeHtml(state.employeeSearch)}" /><span id="employeeCountBadge" class="badge badge-ready">${visibleCount} รายการ</span></div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>รหัส</th><th>ชื่อพนักงาน</th><th>วันที่เริ่มงาน</th><th>สถานะ</th><th>Legacy IDs</th><th></th></tr></thead>
+            <tbody>${rows.map((employee) => `
+              <tr data-employee-search="${escapeHtml(`${employee.employeeCode} ${employee.fullName}`.toLocaleLowerCase("th"))}" ${query && !`${employee.employeeCode} ${employee.fullName}`.toLocaleLowerCase("th").includes(query) ? "hidden" : ""}>
+                <td><strong>${escapeHtml(employee.employeeCode || "-")}</strong></td>
+                <td>${escapeHtml(employee.fullName)}</td>
+                <td>${escapeHtml(employee.startDate || "-")}</td>
+                <td><span class="badge ${employee.isActive ? "badge-ready" : "badge-planned"}">${employee.isActive ? "ใช้งาน" : "ปิดใช้งาน"}</span></td>
+                <td><small>Monthly: ${escapeHtml(employee.legacyIds.monthlyPerformance || "-")}<br>Service: ${escapeHtml(employee.legacyIds.serviceIncentive || "-")}<br>Workday: ${escapeHtml(employee.legacyIds.workdayInsight || "-")}</small></td>
+                <td><div class="actions-cell"><button class="icon-button edit-employee" data-id="${escapeHtml(employee.id)}" type="button" aria-label="แก้ไข"><i data-lucide="pencil"></i></button></div></td>
+              </tr>`).join("") || `<tr><td colspan="6"><div class="empty-state"><i data-lucide="users"></i><p>ยังไม่มีรายชื่อพนักงาน</p></div></td></tr>`}</tbody>
+          </table>
+        </div>
+      </article>
+      <div class="notice notice-info"><i data-lucide="info"></i><div><strong>โครงสร้างร่วมกับ Performance Summary</strong><br>ฟิลด์ <code>name</code> ยังคงไว้เพื่อให้ Web Performance Summary เดิมทำงานได้ และเพิ่ม <code>fullName</code>, <code>employeeCode</code>, <code>startDate</code> และ <code>legacyIds</code> สำหรับ Web รวม</div></div>
+    </div>`;
+
+  document.getElementById("employeeSearch")?.addEventListener("input", (event) => {
+    state.employeeSearch = event.target.value;
+    const search = state.employeeSearch.trim().toLocaleLowerCase("th");
+    let visible = 0;
+    els.employeesView.querySelectorAll("tbody tr[data-employee-search]").forEach((row) => {
+      const match = !search || row.dataset.employeeSearch.includes(search);
+      row.hidden = !match;
+      if (match) visible += 1;
+    });
+    const badge = document.getElementById("employeeCountBadge");
+    if (badge) badge.textContent = `${visible} รายการ`;
+  });
+  document.getElementById("addEmployeeButton")?.addEventListener("click", () => openEmployeeModal());
+  els.employeesView.querySelectorAll(".edit-employee").forEach((button) => button.addEventListener("click", () => {
+    openEmployeeModal(state.employees.find((employee) => employee.id === button.dataset.id));
+  }));
+}
+
+function openEmployeeModal(employee = null) {
+  const isEdit = Boolean(employee);
+  els.modalRoot.innerHTML = `
+    <div class="modal-backdrop" role="presentation">
+      <section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="employeeModalTitle">
+        <div class="modal-head"><div><p class="eyebrow">EMPLOYEE MASTER</p><h2 id="employeeModalTitle">${isEdit ? "แก้ไขพนักงาน" : "เพิ่มพนักงาน"}</h2></div><button id="closeModalButton" class="icon-button" type="button" aria-label="ปิด"><i data-lucide="x"></i></button></div>
+        <form id="employeeForm">
+          <div class="form-grid">
+            <div class="field"><label for="employeeCode">รหัสพนักงาน</label><input id="employeeCode" maxlength="20" value="${escapeHtml(employee?.employeeCode || "")}" placeholder="EMP013" /></div>
+            <div class="field"><label for="employeeStartDate">วันที่เริ่มงาน</label><input id="employeeStartDate" type="date" value="${escapeHtml(employee?.startDate || "")}" /></div>
+            <div class="field field-full"><label for="employeeFullName">ชื่อพนักงาน</label><input id="employeeFullName" maxlength="100" required value="${escapeHtml(employee?.fullName || "")}" /></div>
+            <div class="field"><label for="employeeSortOrder">ลำดับแสดงผล</label><input id="employeeSortOrder" type="number" min="0" value="${employee?.sortOrder || state.employees.length + 1}" /></div>
+            <div class="field"><label for="employeeActive">สถานะ</label><select id="employeeActive"><option value="true" ${employee?.isActive !== false ? "selected" : ""}>ใช้งาน</option><option value="false" ${employee?.isActive === false ? "selected" : ""}>ปิดใช้งาน</option></select></div>
+          </div>
+          <div class="form-actions"><button class="button button-primary" type="submit"><i data-lucide="save"></i>บันทึก</button><button id="cancelEmployeeButton" class="button button-ghost" type="button">ยกเลิก</button></div>
+        </form>
+      </section>
+    </div>`;
+  ensureIcons();
+  const close = () => { els.modalRoot.innerHTML = ""; };
+  document.getElementById("closeModalButton").addEventListener("click", close);
+  document.getElementById("cancelEmployeeButton").addEventListener("click", close);
+  els.modalRoot.querySelector(".modal-backdrop").addEventListener("click", (event) => { if (event.target === event.currentTarget) close(); });
+  document.getElementById("employeeFullName").focus();
+  document.getElementById("employeeForm").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submit = event.submitter;
+    submit.disabled = true;
+    try {
+      await window.EmployeeHubDatabase.saveEmployee({
+        id: employee?.id,
+        employeeCode: document.getElementById("employeeCode").value,
+        fullName: document.getElementById("employeeFullName").value,
+        startDate: document.getElementById("employeeStartDate").value,
+        sortOrder: document.getElementById("employeeSortOrder").value,
+        isActive: document.getElementById("employeeActive").value === "true",
+        expectedVersion: employee?.version || 0,
+        legacyIds: employee?.legacyIds || {},
+      });
+      close();
+      showToast("บันทึกข้อมูลพนักงานแล้ว");
+      await refreshData({ quiet: true });
+    } catch (error) {
+      if (error.code === "VERSION_CONFLICT") showToast("ข้อมูลพนักงานถูกแก้ไขแล้ว กรุณาโหลดใหม่", "warning");
+      else showToast(error.message, "error");
+    } finally {
+      submit.disabled = false;
+    }
+  });
+}
+
+function serviceRecordForSelection() {
+  return state.incentives.find((record) => record.yearMonth === state.serviceMonth && record.employeeId === state.serviceEmployeeId) || null;
+}
+
+function renderService() {
+  if (!state.serviceMonth) state.serviceMonth = getLatestIncentiveMonth();
+  const employeesById = employeeMap();
+  const monthRecords = recordsForMonth(state.serviceMonth);
+  const totals = sumRecords(monthRecords);
+  const selectedRecord = serviceRecordForSelection();
+  const sortedRows = [...monthRecords].sort((a, b) => {
+    const nameA = employeesById.get(a.employeeId)?.fullName || a.employeeId;
+    const nameB = employeesById.get(b.employeeId)?.fullName || b.employeeId;
+    return nameA.localeCompare(nameB, "th");
+  });
+
+  els.serviceView.innerHTML = `
+    <div class="page-grid">
+      <div class="split-grid">
+        <article class="panel">
+          <div class="panel-head"><div><h2>บันทึก Service Incentive</h2><p>หนึ่งพนักงานต่อหนึ่งเดือน ระบบจะอัปเดตรายการเดิมอัตโนมัติ</p></div></div>
+          <form id="serviceForm">
+            <div class="form-grid">
+              <div class="field"><label for="serviceMonth">เดือน</label><input id="serviceMonth" type="month" required value="${escapeHtml(state.serviceMonth)}" /></div>
+              <div class="field"><label for="serviceEmployee">พนักงาน</label><select id="serviceEmployee" required><option value="">เลือกพนักงาน</option>${activeEmployees().map((employee) => `<option value="${escapeHtml(employee.id)}" ${state.serviceEmployeeId === employee.id ? "selected" : ""}>${escapeHtml(employee.employeeCode ? `${employee.employeeCode} · ${employee.fullName}` : employee.fullName)}</option>`).join("")}</select></div>
+              <div class="field"><label for="salesAmount">ขายของ</label><input id="salesAmount" type="number" step="0.01" value="${selectedRecord?.salesAmount ?? 0}" /></div>
+              <div class="field"><label for="evaluationAmount">ประเมิน</label><input id="evaluationAmount" type="number" step="0.01" value="${selectedRecord?.evaluationAmount ?? 0}" /></div>
+              <div class="field field-full"><label for="timeAmount">เวลา</label><input id="timeAmount" type="number" step="0.01" value="${selectedRecord?.timeAmount ?? 0}" /><span class="field-help">รองรับค่าติดลบ เช่น -100</span></div>
+              <div class="amount-preview field-full"><span>ยอดรวม</span><strong id="serviceTotalPreview" class="${(selectedRecord?.totalAmount || 0) < 0 ? "negative" : ""}">${formatMoney(selectedRecord?.totalAmount || 0)}</strong></div>
+            </div>
+            <div class="form-actions"><button class="button button-primary" type="submit"><i data-lucide="save"></i>${selectedRecord ? "อัปเดตรายการ" : "บันทึกรายการ"}</button><button id="clearServiceForm" class="button button-ghost" type="button">ล้างฟอร์ม</button></div>
+          </form>
+        </article>
+
+        <article class="panel">
+          <div class="panel-head"><div><h2>สรุปเดือน ${escapeHtml(state.serviceMonth)}</h2><p>${monthRecords.length} จาก ${activeEmployees().length} พนักงาน</p></div><button id="exportServiceButton" class="button button-secondary button-small" type="button"><i data-lucide="file-down"></i>Export CSV</button></div>
+          <div class="kpi-grid" style="grid-template-columns:repeat(2,minmax(0,1fr))">
+            <article class="kpi-card"><div class="kpi-head"><span>ขายของ</span><span class="kpi-icon"><i data-lucide="shopping-bag"></i></span></div><div class="kpi-value">${formatMoney(totals.salesAmount)}</div></article>
+            <article class="kpi-card"><div class="kpi-head"><span>ประเมิน</span><span class="kpi-icon"><i data-lucide="clipboard-check"></i></span></div><div class="kpi-value">${formatMoney(totals.evaluationAmount)}</div></article>
+            <article class="kpi-card"><div class="kpi-head"><span>เวลา</span><span class="kpi-icon"><i data-lucide="clock-3"></i></span></div><div class="kpi-value ${totals.timeAmount < 0 ? "negative" : ""}">${formatMoney(totals.timeAmount)}</div></article>
+            <article class="kpi-card"><div class="kpi-head"><span>ยอดรวม</span><span class="kpi-icon"><i data-lucide="circle-dollar-sign"></i></span></div><div class="kpi-value ${totals.totalAmount < 0 ? "negative" : ""}">${formatMoney(totals.totalAmount)}</div></article>
+          </div>
+        </article>
+      </div>
+
+      <article class="panel">
+        <div class="panel-head"><div><h2>รายการประจำเดือน</h2><p>แก้ไขหรือลบเฉพาะรายการที่เลือก</p></div></div>
+        <div class="table-wrap"><table>
+          <thead><tr><th>รหัส</th><th>ชื่อพนักงาน</th><th class="money">ขายของ</th><th class="money">ประเมิน</th><th class="money">เวลา</th><th class="money">ยอดรวม</th><th>แก้ไขล่าสุด</th><th></th></tr></thead>
+          <tbody>${sortedRows.map((record) => {
+            const employee = employeesById.get(record.employeeId);
+            return `<tr>
+              <td>${escapeHtml(employee?.employeeCode || "-")}</td><td>${escapeHtml(employee?.fullName || record.employeeId)}</td>
+              <td class="money">${formatMoney(record.salesAmount)}</td><td class="money">${formatMoney(record.evaluationAmount)}</td><td class="money ${record.timeAmount < 0 ? "negative" : ""}">${formatMoney(record.timeAmount)}</td><td class="money ${record.totalAmount < 0 ? "negative" : ""}"><strong>${formatMoney(record.totalAmount)}</strong></td>
+              <td>${formatDate(record.updatedAt)}</td><td><div class="actions-cell"><button class="icon-button edit-incentive" data-id="${escapeHtml(record.id)}" type="button" aria-label="แก้ไข"><i data-lucide="pencil"></i></button><button class="icon-button delete-incentive" data-id="${escapeHtml(record.id)}" type="button" aria-label="ลบ"><i data-lucide="trash-2"></i></button></div></td>
+            </tr>`;
+          }).join("") || `<tr><td colspan="8"><div class="empty-state"><i data-lucide="inbox"></i><p>ยังไม่มีข้อมูลเดือนนี้</p></div></td></tr>`}</tbody>
+        </table></div>
+      </article>
+    </div>`;
+
+  const form = document.getElementById("serviceForm");
+  const monthInput = document.getElementById("serviceMonth");
+  const employeeInput = document.getElementById("serviceEmployee");
+  const amountInputs = ["salesAmount", "evaluationAmount", "timeAmount"].map((id) => document.getElementById(id));
+  const updatePreview = () => {
+    const total = amountInputs.reduce((sum, input) => sum + (Number(input.value) || 0), 0);
+    const preview = document.getElementById("serviceTotalPreview");
+    preview.textContent = formatMoney(total);
+    preview.classList.toggle("negative", total < 0);
+  };
+  amountInputs.forEach((input) => input.addEventListener("input", updatePreview));
+  monthInput.addEventListener("change", () => { state.serviceMonth = monthInput.value; state.serviceEmployeeId = ""; renderService(); ensureIcons(); });
+  employeeInput.addEventListener("change", () => { state.serviceEmployeeId = employeeInput.value; renderService(); ensureIcons(); });
+  document.getElementById("clearServiceForm").addEventListener("click", () => { state.serviceEmployeeId = ""; renderService(); ensureIcons(); });
+  document.getElementById("exportServiceButton").addEventListener("click", exportServiceCsv);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!state.serviceEmployeeId) return showToast("กรุณาเลือกพนักงาน", "warning");
+    const submit = event.submitter;
+    submit.disabled = true;
+    const existing = serviceRecordForSelection();
+    try {
+      await window.EmployeeHubDatabase.saveServiceIncentive({
+        employeeId: state.serviceEmployeeId,
+        yearMonth: state.serviceMonth,
+        salesAmount: document.getElementById("salesAmount").value,
+        evaluationAmount: document.getElementById("evaluationAmount").value,
+        timeAmount: document.getElementById("timeAmount").value,
+        expectedVersion: existing?.version || 0,
+      });
+      showToast(existing ? "อัปเดต Service Incentive แล้ว" : "บันทึก Service Incentive แล้ว");
+      await refreshData({ quiet: true });
+    } catch (error) {
+      if (error.code === "VERSION_CONFLICT") showToast("ข้อมูลรายการนี้เปลี่ยนแล้ว กรุณาโหลดใหม่", "warning");
+      else showToast(error.message, "error");
+    } finally { submit.disabled = false; }
+  });
+
+  els.serviceView.querySelectorAll(".edit-incentive").forEach((button) => button.addEventListener("click", () => {
+    const record = state.incentives.find((item) => item.id === button.dataset.id);
+    if (!record) return;
+    state.serviceMonth = record.yearMonth;
+    state.serviceEmployeeId = record.employeeId;
+    renderService(); ensureIcons(); window.scrollTo({ top: 0, behavior: "smooth" });
+  }));
+  els.serviceView.querySelectorAll(".delete-incentive").forEach((button) => button.addEventListener("click", async () => {
+    const record = state.incentives.find((item) => item.id === button.dataset.id);
+    if (!record) return;
+    const employee = employeesById.get(record.employeeId);
+    if (!window.confirm(`ต้องการลบ Service Incentive ของ ${employee?.fullName || record.employeeId} เดือน ${record.yearMonth} ใช่หรือไม่?`)) return;
+    button.disabled = true;
+    try {
+      await window.EmployeeHubDatabase.deleteServiceIncentive(record.id);
+      showToast("ลบรายการแล้ว");
+      if (state.serviceEmployeeId === record.employeeId) state.serviceEmployeeId = "";
+      await refreshData({ quiet: true });
+    } catch (error) { showToast(error.message, "error"); }
+  }));
+}
+
+function csvSafe(value) {
+  let text = String(value ?? "");
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function exportServiceCsv() {
+  const records = recordsForMonth(state.serviceMonth);
+  if (!records.length) return showToast("ไม่มีข้อมูลสำหรับ Export", "warning");
+  const employeesById = employeeMap();
+  const rows = [["เดือน", "รหัสพนักงาน", "ชื่อพนักงาน", "ขายของ", "ประเมิน", "เวลา", "ยอดรวม", "แก้ไขล่าสุด"]];
+  records.forEach((record) => {
+    const employee = employeesById.get(record.employeeId);
+    rows.push([record.yearMonth, employee?.employeeCode || "", employee?.fullName || record.employeeId, record.salesAmount, record.evaluationAmount, record.timeAmount, record.totalAmount, record.updatedAt]);
+  });
+  const csv = `\ufeff${rows.map((row) => row.map(csvSafe).join(",")).join("\r\n")}`;
+  const url = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `service-incentive-${state.serviceMonth}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+  showToast("Export CSV เรียบร้อยแล้ว");
+}
+
+function renderPerformance() {
+  const summary = state.evaluationSummary;
+  els.performanceView.innerHTML = `
+    <div class="page-grid">
+      <div class="kpi-grid">
+        <article class="kpi-card"><div class="kpi-head"><span>Evaluation Records</span><span class="kpi-icon"><i data-lucide="database"></i></span></div><div class="kpi-value">${summary.count}</div><div class="kpi-note">Collection: evaluations</div></article>
+        <article class="kpi-card"><div class="kpi-head"><span>ปีข้อมูล</span><span class="kpi-icon"><i data-lucide="calendar-range"></i></span></div><div class="kpi-value">${summary.years.length}</div><div class="kpi-note">${escapeHtml(summary.years.join(", ") || "ยังไม่มีข้อมูล")}</div></article>
+        <article class="kpi-card"><div class="kpi-head"><span>อัปเดตล่าสุด</span><span class="kpi-icon"><i data-lucide="history"></i></span></div><div class="kpi-value" style="font-size:1.15rem">${formatDate(summary.latestUpdatedAt)}</div><div class="kpi-note">อ่านจาก Firestore เดิม</div></article>
+        <article class="kpi-card"><div class="kpi-head"><span>สถานะ</span><span class="kpi-icon"><i data-lucide="circle-check"></i></span></div><div class="kpi-value">ปกติ</div><div class="kpi-note">Web เดิมยังใช้งานได้</div></article>
+      </div>
+      <article class="panel">
+        <div class="panel-head"><div><h2>แผนรวม Performance Summary</h2><p>Phase 1 เชื่อมฐานข้อมูลและ Employee IDs แล้ว โดยยังไม่เปลี่ยน UI เดิม</p></div><span class="badge badge-ready">ฐานข้อมูลเชื่อมแล้ว</span></div>
+        <div class="notice notice-info"><i data-lucide="shield-check"></i><div>ระบบใหม่นี้ไม่แก้หรือลบ Collection <code>evaluations</code>, <code>settings</code> และ <code>employeeNames</code> ที่ Web Performance Summary ใช้อยู่</div></div>
+        <div class="progress-list" style="margin-top:16px">
+          <div class="progress-row"><span>Firebase Auth</span><div class="progress-track"><div class="progress-bar" style="width:100%"></div></div><strong>100%</strong></div>
+          <div class="progress-row"><span>Employee Master</span><div class="progress-track"><div class="progress-bar" style="width:100%"></div></div><strong>100%</strong></div>
+          <div class="progress-row"><span>รวม UI</span><div class="progress-track"><div class="progress-bar" style="width:35%"></div></div><strong>Phase 2</strong></div>
+        </div>
+      </article>
+    </div>`;
+}
+
+function renderWorkday() {
+  els.workdayView.innerHTML = `
+    <div class="page-grid">
+      <article class="panel">
+        <div class="panel-head"><div><h2>Workday Insight · Phase 2</h2><p>เวลาสาย วันลา และสิทธิ์ลาคงเหลือ</p></div><span class="badge badge-planned">เตรียม Migration</span></div>
+        <div class="notice notice-success"><i data-lucide="badge-check"></i><div><strong>ข้อยืนยันสำหรับข้อมูลกลาง</strong><br>รายการขัดแย้งเรื่องวันลาและวันทำงานได้รับการยืนยันครบแล้ว รวมถึงประเภท “ลาบวช” ที่นับเฉพาะวันทำงาน รายละเอียดเก็บไว้ในไฟล์ Audit ภายในโฟลเดอร์ Migration</div></div>
+        <div class="module-grid" style="margin-top:16px">
+          <article class="module-card"><span class="module-icon"><i data-lucide="clock-3"></i></span><div><h3>attendanceMonthly</h3><p>หนึ่งพนักงานต่อหนึ่งเดือน ป้องกันรายการซ้ำด้วย Document ID</p></div></article>
+          <article class="module-card"><span class="module-icon"><i data-lucide="calendar-off"></i></span><div><h3>leaveRecords</h3><p>รองรับ sick, personal, vacation, ordination และประเภทอื่น</p></div></article>
+          <article class="module-card"><span class="module-icon"><i data-lucide="calculator"></i></span><div><h3>Leave Balance</h3><p>คำนวณตามวันทำงานจริงและกฎบริษัทที่ยืนยัน</p></div></article>
+        </div>
+      </article>
+    </div>`;
+}
+
+function renderMonthly() {
+  els.monthlyView.innerHTML = `
+    <div class="page-grid">
+      <article class="panel">
+        <div class="panel-head"><div><h2>Monthly Performance · Phase 3</h2><p>โมดูลที่ซับซ้อนที่สุด จะย้ายหลัง Workday ทำงานเสถียร</p></div><span class="badge badge-planned">วางโครงสร้างแล้ว</span></div>
+        <div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div>มีคะแนนประวัติพิเศษค่า <strong>3.5</strong> จำนวน 1 รายการที่ได้รับการยืนยันแล้ว ระบบ Migration จะเก็บค่าเดิมและติดธง <code>legacyException=true</code> โดยไม่ปรับลดค่า</div></div>
+        <div class="progress-list" style="margin-top:16px">
+          <div class="progress-row"><span>Employee Mapping</span><div class="progress-track"><div class="progress-bar" style="width:100%"></div></div><strong>12/12</strong></div>
+          <div class="progress-row"><span>Data Audit</span><div class="progress-track"><div class="progress-bar" style="width:100%"></div></div><strong>ยืนยันแล้ว</strong></div>
+          <div class="progress-row"><span>Firestore Migration</span><div class="progress-track"><div class="progress-bar" style="width:20%"></div></div><strong>Phase 3</strong></div>
+        </div>
+      </article>
+    </div>`;
+}
+
+function renderMigration() {
+  const status = state.migrationStatus;
+  const seedCounts = state.seed?.counts || { employees: 12, serviceIncentives: 72, serviceMonths: 6 };
+  els.migrationView.innerHTML = `
+    <div class="page-grid">
+      <article class="panel">
+        <div class="panel-head"><div><h2>Migration Center · Phase 1</h2><p>นำเข้า Employee Master และ Service Incentive จากไฟล์ที่ตรวจสอบแล้ว</p></div><span class="badge ${status ? "badge-ready" : "badge-progress"}">${status ? "นำเข้าแล้ว" : "พร้อมนำเข้า"}</span></div>
+        ${status ? `<div class="notice notice-success"><i data-lucide="circle-check"></i><div><strong>Migration สำเร็จ</strong><br>ID: ${escapeHtml(status.migrationId)} · วันที่ ${formatDate(status.importedAt)}</div></div>` : `<div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div>การกดนำเข้าจะเพิ่ม/อัปเดตข้อมูลใน Firestore Project เดิม โดยไม่ลบ Google Sheets และไม่ลบ Performance Summary เดิม</div></div>`}
+        <div class="kpi-grid" style="margin-top:16px">
+          <article class="kpi-card"><div class="kpi-head"><span>Employee Master</span><span class="kpi-icon"><i data-lucide="users-round"></i></span></div><div class="kpi-value">${seedCounts.employees || 12}</div><div class="kpi-note">จับคู่ครบทุกระบบ</div></article>
+          <article class="kpi-card"><div class="kpi-head"><span>Service Incentive</span><span class="kpi-icon"><i data-lucide="badge-dollar-sign"></i></span></div><div class="kpi-value">${seedCounts.serviceIncentives || 72}</div><div class="kpi-note">รายการที่ตรวจยอดรวมแล้ว</div></article>
+          <article class="kpi-card"><div class="kpi-head"><span>เดือนข้อมูล</span><span class="kpi-icon"><i data-lucide="calendar-range"></i></span></div><div class="kpi-value">${seedCounts.serviceMonths || 6}</div><div class="kpi-note">ม.ค.–มิ.ย. 2569</div></article>
+          <article class="kpi-card"><div class="kpi-head"><span>ข้อมูลต้นฉบับ</span><span class="kpi-icon"><i data-lucide="file-spreadsheet"></i></span></div><div class="kpi-value">3</div><div class="kpi-note">Google Sheets/Excel ยังคงเดิม</div></article>
+        </div>
+        <div class="field" style="margin-top:16px">
+          <label for="migrationFile">เลือกไฟล์ Migration Seed จากเครื่อง</label>
+          <input id="migrationFile" type="file" accept="application/json,.json" />
+          <span class="field-help">ไฟล์ <code>migration/migration-seed.json</code> ถูกเก็บนอกโฟลเดอร์ docs จึงไม่ถูกเผยแพร่บน Hosting</span>
+        </div>
+        ${state.seed ? `<div class="notice notice-info" style="margin-top:12px"><i data-lucide="file-check-2"></i><div>เลือกไฟล์แล้ว: <strong>${escapeHtml(state.seedFileName || "migration-seed.json")}</strong> · ${state.seed.employees?.length || 0} พนักงาน · ${state.seed.serviceIncentives?.length || 0} รายการ</div></div>` : ""}
+        <div class="form-actions">
+          <button id="previewSeedButton" class="button button-secondary" type="button" ${state.seed ? "" : "disabled"}><i data-lucide="scan-search"></i>ตรวจไฟล์ Seed</button>
+          <button id="importSeedButton" class="button button-primary" type="button" ${state.seed ? "" : "disabled"}><i data-lucide="database-zap"></i>${status ? "นำเข้าใหม่จากต้นฉบับ" : "เริ่มนำเข้า Phase 1"}</button>
+        </div>
+      </article>
+      <article class="panel">
+        <div class="panel-head"><div><h2>ลำดับหลังนำเข้า</h2><p>ตรวจสอบก่อนย้ายโมดูลถัดไป</p></div></div>
+        <ol>
+          <li>ตรวจ Employee Master จำนวน 12 คน และรหัส EMP001–EMP012</li>
+          <li>ตรวจ Service Incentive แต่ละเดือนเทียบกับ Google Sheets เดิม</li>
+          <li>ใช้งาน Web ใหม่คู่ขนาน โดยยังไม่ลบ Web เดิม</li>
+          <li>เริ่ม Workday Insight หลังยืนยันยอดและรายชื่อครบ</li>
+        </ol>
+      </article>
+    </div>`;
+
+  document.getElementById("migrationFile")?.addEventListener("change", async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    try {
+      const parsed = JSON.parse(await file.text());
+      if (Number(parsed.schemaVersion) !== 1 || !Array.isArray(parsed.employees) || !Array.isArray(parsed.serviceIncentives)) {
+        throw new Error("ไฟล์ Migration Seed ไม่ถูกต้อง");
+      }
+      state.seed = parsed;
+      state.seedFileName = file.name;
+      renderMigration();
+      ensureIcons();
+      showToast("อ่านไฟล์ Migration Seed แล้ว");
+    } catch (error) {
+      state.seed = null;
+      state.seedFileName = "";
+      showToast(error.message || "อ่านไฟล์ไม่สำเร็จ", "error");
+    }
+  });
+  document.getElementById("previewSeedButton")?.addEventListener("click", () => {
+    if (state.seed) showSeedPreview(state.seed);
+  });
+  document.getElementById("importSeedButton")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const warning = status
+      ? "ระบบเคยนำเข้าแล้ว การนำเข้าใหม่จะเขียนค่าจากไฟล์ต้นฉบับทับ Service Incentive เดิมของเดือน ม.ค.–มิ.ย. 2569 ดำเนินการต่อหรือไม่?"
+      : "ยืนยันนำเข้า Employee Master 12 คน และ Service Incentive 72 รายการเข้า Firestore ใช่หรือไม่?";
+    if (!window.confirm(warning)) return;
+    button.disabled = true;
+    try {
+      if (!state.seed) throw new Error("กรุณาเลือกไฟล์ Migration Seed ก่อน");
+      setBusy(true, "กำลังนำเข้าข้อมูล");
+      const result = await window.EmployeeHubDatabase.importMigrationSeed(state.seed);
+      showToast(`นำเข้าสำเร็จ: พนักงาน ${result.employeeCount} คน · Incentive ${result.incentiveCount} รายการ`);
+      await refreshData({ quiet: true });
+    } catch (error) {
+      showToast(error.message, "error", 6500);
+      setSyncStatus("error", "นำเข้าไม่สำเร็จ");
+    } finally {
+      button.disabled = false;
+      state.loading = false;
+    }
+  });
+}
+
+function showSeedPreview(seed) {
+  const first = seed.serviceIncentives?.[0];
+  const last = seed.serviceIncentives?.at(-1);
+  els.modalRoot.innerHTML = `
+    <div class="modal-backdrop"><section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="seedPreviewTitle">
+      <div class="modal-head"><div><p class="eyebrow">MIGRATION SEED</p><h2 id="seedPreviewTitle">ตรวจไฟล์นำเข้า</h2></div><button id="closeModalButton" class="icon-button" type="button"><i data-lucide="x"></i></button></div>
+      <div class="notice notice-success"><i data-lucide="badge-check"></i><div>Schema Version ${escapeHtml(seed.schemaVersion)} · Migration ID ${escapeHtml(seed.migrationId)}</div></div>
+      <div class="code-block" style="margin-top:14px">พนักงาน: ${seed.employees?.length || 0}\nService Incentive: ${seed.serviceIncentives?.length || 0}\nช่วงข้อมูล: ${escapeHtml(first?.yearMonth || "-")} ถึง ${escapeHtml(last?.yearMonth || "-")}\nข้อยืนยัน Migration: ${seed.decisions?.length || 0} รายการ</div>
+      <div class="form-actions"><button id="closeSeedPreview" class="button button-primary" type="button">ปิด</button></div>
+    </section></div>`;
+  ensureIcons();
+  const close = () => { els.modalRoot.innerHTML = ""; };
+  document.getElementById("closeModalButton").addEventListener("click", close);
+  document.getElementById("closeSeedPreview").addEventListener("click", close);
+}
+
+async function handleLogin(event) {
+  event.preventDefault();
+  const button = els.loginButton;
+  button.disabled = true;
+  showAuthMessage("กำลังเข้าสู่ระบบ...");
+  try {
+    await window.EmployeeHubDatabase.signIn(els.loginEmail.value, els.loginPassword.value);
+    await initializeAuthenticatedApp();
+  } catch (error) {
+    console.error(error);
+    showAuthMessage(error.message || "เข้าสู่ระบบไม่สำเร็จ", true);
+  } finally { button.disabled = false; }
+}
+
+async function initializeAuthenticatedApp() {
+  const user = await window.EmployeeHubDatabase.getAuthenticatedUser();
+  if (!user) { setVisibleApp(false); return; }
+  const profile = await window.EmployeeHubDatabase.getProfile(user.uid);
+  if (profile.role !== "admin") {
+    await window.EmployeeHubDatabase.signOut();
+    throw new Error("Employee Hub เวอร์ชันนี้อนุญาตเฉพาะบัญชี admin");
+  }
+  state.user = user;
+  state.profile = profile;
+  els.accountName.textContent = profile.displayName || user.email || "Admin";
+  els.accountRole.textContent = "ผู้ดูแลระบบ";
+  setVisibleApp(true);
+  setSyncStatus("syncing", "กำลังโหลดข้อมูล");
+  await refreshData();
+  const hashView = window.location.hash.replace("#", "");
+  showView(VIEW_TITLES[hashView] ? hashView : "dashboard");
+}
+
+function bindGlobalEvents() {
+  els.loginForm.addEventListener("submit", handleLogin);
+  els.logoutButton.addEventListener("click", async () => {
+    try {
+      await window.EmployeeHubDatabase.signOut();
+      state.user = null; state.profile = null;
+      setVisibleApp(false);
+      showAuthMessage("ออกจากระบบแล้ว");
+    } catch (error) { showToast(error.message, "error"); }
+  });
+  els.refreshButton.addEventListener("click", () => refreshData());
+  document.addEventListener("click", (event) => {
+    const nav = event.target.closest("[data-view]");
+    if (nav) showView(nav.dataset.view);
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && els.modalRoot.innerHTML) els.modalRoot.innerHTML = "";
+  });
+}
+
+async function bootstrap() {
+  cacheElements();
+  bindGlobalEvents();
+  ensureIcons();
+  if (!window.EmployeeHubDatabase?.isConfigured()) {
+    els.authConfigHelp.hidden = false;
+    showAuthMessage("ยังไม่ได้ตั้งค่า Firebase Web App", true);
+    return;
+  }
+  try {
+    await window.EmployeeHubDatabaseReady;
+    const user = await window.EmployeeHubDatabase.getAuthenticatedUser();
+    if (user) await initializeAuthenticatedApp();
+    else setVisibleApp(false);
+  } catch (error) {
+    console.error(error);
+    setVisibleApp(false);
+    showAuthMessage(error.message || "เริ่มระบบไม่สำเร็จ", true);
+  }
+}
+
+window.addEventListener("DOMContentLoaded", bootstrap);
