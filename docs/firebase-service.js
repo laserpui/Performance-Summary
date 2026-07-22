@@ -1,20 +1,22 @@
 "use strict";
 
-(function attachEmployeeHubDatabase(global) {
-  const CONFIG = global.EMPLOYEE_HUB_FIREBASE_CONFIG || {};
+(function attachFirebaseDatabase(global) {
+  const CONFIG = global.KPI_FIREBASE_CONFIG || {};
   const SDK_VERSION = "12.16.0";
   const SDK_BASE = `https://www.gstatic.com/firebasejs/${SDK_VERSION}`;
-  const MAX_BATCH_OPERATIONS = 400;
+  const MAX_BATCH_OPERATIONS = 425;
 
   let app = null;
   let auth = null;
   let db = null;
-  let authApi = null;
   let firestoreApi = null;
+  let authApi = null;
+  let unsubscribeCallbacks = [];
   let readyError = null;
 
   function isConfigured() {
-    return ["apiKey", "authDomain", "projectId", "appId"].every((key) => {
+    const required = ["apiKey", "authDomain", "projectId", "appId"];
+    return required.every((key) => {
       const value = String(CONFIG[key] || "");
       return value && !value.includes("REPLACE_ME") && !value.includes("YOUR_PROJECT_ID");
     });
@@ -28,9 +30,9 @@
       "auth/user-disabled": "บัญชีนี้ถูกระงับการใช้งาน",
       "auth/too-many-requests": "มีการเข้าสู่ระบบผิดหลายครั้ง กรุณาลองใหม่ภายหลัง",
       "auth/network-request-failed": "ไม่สามารถเชื่อมต่อ Firebase Authentication ได้",
-      "permission-denied": "ไม่มีสิทธิ์ดำเนินการกับข้อมูลนี้ กรุณาตรวจ Firestore Rules และโปรไฟล์ admin",
+      "permission-denied": "ไม่มีสิทธิ์ดำเนินการกับข้อมูลนี้",
       "unavailable": "Firestore ไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่",
-      "failed-precondition": "Firestore ยังตั้งค่าไม่ครบ หรือ Query ต้องใช้ Index เพิ่มเติม",
+      "failed-precondition": "Firestore ยังตั้งค่าไม่ครบหรือข้อมูลมีเงื่อนไขไม่ตรงกัน",
       "already-exists": "มีข้อมูลนี้อยู่แล้ว",
       "not-found": "ไม่พบข้อมูลที่ต้องการ",
     };
@@ -40,10 +42,14 @@
     return wrapped;
   }
 
-  function assertReady() {
-    if (!isConfigured()) throw new Error("ยังไม่ได้ตั้งค่า Firebase Web App ใน docs/firebase-config.js");
+  function assertConfigured() {
+    if (!isConfigured()) {
+      throw new Error("ยังไม่ได้ตั้งค่า Firebase Web App ในไฟล์ docs/firebase-config.js");
+    }
     if (readyError) throw readyError;
-    if (!app || !auth || !db || !authApi || !firestoreApi) throw new Error("Firebase SDK ยังโหลดไม่สำเร็จ");
+    if (!app || !auth || !db || !firestoreApi || !authApi) {
+      throw new Error("Firebase SDK ยังโหลดไม่สำเร็จ");
+    }
   }
 
   async function initializeSdk() {
@@ -79,10 +85,12 @@
       try {
         await authModule.setPersistence(auth, authModule.browserLocalPersistence);
       } catch (error) {
-        console.warn("ไม่สามารถเก็บสถานะ Login แบบถาวรได้", error);
+        console.warn("ไม่สามารถเก็บสถานะ Login แบบถาวรได้ จึงใช้เฉพาะหน่วยความจำ", error);
         await authModule.setPersistence(auth, authModule.inMemoryPersistence);
       }
 
+      // ใช้ Memory Cache เป็นค่าเริ่มต้น เพราะข้อมูลประเมินพนักงานเป็นข้อมูลภายใน
+      // จึงไม่เก็บฐานข้อมูลลง IndexedDB แบบถาวรบนอุปกรณ์โดยอัตโนมัติ
       db = firestoreModule.initializeFirestore(app, {
         localCache: firestoreModule.memoryLocalCache(),
       });
@@ -105,12 +113,6 @@
     }
   }
 
-  function currentUid() {
-    const uid = auth?.currentUser?.uid;
-    if (!uid) throw new Error("กรุณาเข้าสู่ระบบก่อนดำเนินการ");
-    return uid;
-  }
-
   function toIso(value) {
     if (!value) return "";
     if (typeof value.toDate === "function") return value.toDate().toISOString();
@@ -118,37 +120,33 @@
     return Number.isNaN(parsed.getTime()) ? "" : parsed.toISOString();
   }
 
-  function timestampFromIso(value) {
-    const parsed = new Date(value || "");
-    return Number.isNaN(parsed.getTime()) ? null : firestoreApi.Timestamp.fromDate(parsed);
-  }
-
-  function normalizeName(value) {
-    return String(value || "").normalize("NFC").trim().replace(/\s+/g, " ").toLocaleLowerCase("th");
+  function normalizeName(name) {
+    return String(name || "").trim().replace(/\s+/g, " ").toLocaleLowerCase("th");
   }
 
   async function hashText(value) {
-    const bytes = new TextEncoder().encode(String(value || ""));
+    const bytes = new TextEncoder().encode(value);
     const digest = await crypto.subtle.digest("SHA-256", bytes);
     return [...new Uint8Array(digest)].map((part) => part.toString(16).padStart(2, "0")).join("");
   }
 
-  function makeEmployeeId() {
-    return `emp_${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  function currentUid() {
+    const uid = auth?.currentUser?.uid;
+    if (!uid) throw new Error("กรุณาเข้าสู่ระบบก่อนดำเนินการ");
+    return uid;
   }
 
-  function parseYearMonth(value) {
-    const text = String(value || "");
-    const match = /^(\d{4})-(0[1-9]|1[0-2])$/.exec(text);
-    if (!match) throw new Error("เดือนต้องอยู่ในรูปแบบ YYYY-MM");
-    return { yearMonth: text, year: Number(match[1]), month: Number(match[2]) };
+  function validateScores(scores) {
+    if (!Array.isArray(scores) || scores.length !== 6) throw new Error("คะแนนต้องมีครบ 6 หัวข้อ");
+    const normalized = scores.map(Number);
+    if (!normalized.every((score) => Number.isInteger(score) && score >= 20 && score <= 100 && score % 5 === 0)) {
+      throw new Error("คะแนนต้องอยู่ระหว่าง 20–100 และเพิ่มทีละ 5");
+    }
+    return normalized;
   }
 
-  function normalizeMoney(value, label) {
-    const amount = Number(value);
-    if (!Number.isFinite(amount)) throw new Error(`${label} ต้องเป็นตัวเลข`);
-    if (Math.abs(amount) > 100000000) throw new Error(`${label} มีค่ามากเกินไป`);
-    return Math.round((amount + Number.EPSILON) * 100) / 100;
+  function evaluationId(year, employeeId, month) {
+    return `${Number(year)}__${employeeId}__${Number(month)}`;
   }
 
   function profileFromSnapshot(snapshot) {
@@ -157,57 +155,23 @@
     if (!row.isActive) throw new Error("บัญชีนี้ถูกระงับการใช้งาน");
     return {
       id: snapshot.id,
-      displayName: String(row.displayName || ""),
-      role: String(row.role || "viewer"),
-      isActive: Boolean(row.isActive),
-    };
-  }
-
-  function employeeFromSnapshot(snapshot) {
-    const row = snapshot.data();
-    return {
-      id: snapshot.id,
-      employeeCode: String(row.employeeCode || ""),
-      fullName: String(row.fullName || row.name || ""),
-      name: String(row.name || row.fullName || ""),
-      startDate: String(row.startDate || ""),
-      isActive: row.isActive !== false,
-      sortOrder: Number(row.sortOrder) || 0,
-      legacyIds: row.legacyIds && typeof row.legacyIds === "object" ? row.legacyIds : {},
-      version: Number(row.version) || 0,
-      updatedAt: toIso(row.updatedAt),
-    };
-  }
-
-  function incentiveFromSnapshot(snapshot) {
-    const row = snapshot.data();
-    return {
-      id: snapshot.id,
-      employeeId: String(row.employeeId || ""),
-      yearMonth: String(row.yearMonth || ""),
-      year: Number(row.year),
-      month: Number(row.month),
-      salesAmount: Number(row.salesAmount) || 0,
-      evaluationAmount: Number(row.evaluationAmount) || 0,
-      timeAmount: Number(row.timeAmount) || 0,
-      totalAmount: Number(row.totalAmount) || 0,
-      version: Number(row.version) || 1,
-      source: String(row.source || "Employee Hub"),
-      updatedAt: toIso(row.updatedAt),
+      display_name: row.displayName || "",
+      role: row.role || "viewer",
+      is_active: Boolean(row.isActive),
     };
   }
 
   async function signIn(email, password) {
-    assertReady();
+    assertConfigured();
     try {
-      return await authApi.signInWithEmailAndPassword(auth, String(email || "").trim(), password);
+      return await authApi.signInWithEmailAndPassword(auth, email, password);
     } catch (error) {
       throw friendlyError(error, "เข้าสู่ระบบไม่สำเร็จ");
     }
   }
 
   async function signOut() {
-    assertReady();
+    assertConfigured();
     try {
       await authApi.signOut(auth);
     } catch (error) {
@@ -216,213 +180,96 @@
   }
 
   async function getAuthenticatedUser() {
-    assertReady();
+    assertConfigured();
     if (typeof auth.authStateReady === "function") {
       await auth.authStateReady();
     } else {
       await new Promise((resolve) => {
-        const stop = authApi.onAuthStateChanged(auth, () => {
-          stop();
-          resolve();
-        });
+        const stop = authApi.onAuthStateChanged(auth, () => { stop(); resolve(); });
       });
     }
     const user = auth.currentUser;
     if (!user) return null;
-    return { id: user.uid, uid: user.uid, email: user.email || "", displayName: user.displayName || "" };
+    return {
+      id: user.uid,
+      uid: user.uid,
+      email: user.email || "",
+      displayName: user.displayName || "",
+    };
   }
 
   async function getProfile(userId) {
-    assertReady();
+    assertConfigured();
     try {
-      return profileFromSnapshot(await firestoreApi.getDoc(firestoreApi.doc(db, "profiles", userId)));
+      const snapshot = await firestoreApi.getDoc(firestoreApi.doc(db, "profiles", userId));
+      return profileFromSnapshot(snapshot);
     } catch (error) {
       throw friendlyError(error, "อ่านสิทธิ์ผู้ใช้งานไม่สำเร็จ");
     }
   }
 
-  async function loadEmployees() {
-    assertReady();
+  async function loadState() {
+    assertConfigured();
     try {
-      const snapshots = await firestoreApi.getDocs(firestoreApi.collection(db, "employees"));
-      return snapshots.docs
-        .map(employeeFromSnapshot)
-        .filter((row) => row.fullName)
-        .sort((a, b) => (a.sortOrder - b.sortOrder) || a.fullName.localeCompare(b.fullName, "th"));
-    } catch (error) {
-      throw friendlyError(error, "อ่านรายชื่อพนักงานไม่สำเร็จ");
-    }
-  }
+      const [settingsSnapshot, employeesSnapshot, evaluationsSnapshot] = await Promise.all([
+        firestoreApi.getDoc(firestoreApi.doc(db, "settings", "main")),
+        firestoreApi.getDocs(firestoreApi.collection(db, "employees")),
+        firestoreApi.getDocs(firestoreApi.collection(db, "evaluations")),
+      ]);
 
-  async function loadServiceIncentives(yearMonth = "") {
-    assertReady();
-    try {
-      const collectionRef = firestoreApi.collection(db, "serviceIncentives");
-      const source = yearMonth
-        ? firestoreApi.query(collectionRef, firestoreApi.where("yearMonth", "==", yearMonth))
-        : collectionRef;
-      const snapshots = await firestoreApi.getDocs(source);
-      return snapshots.docs.map(incentiveFromSnapshot).sort((a, b) => {
-        if (a.yearMonth !== b.yearMonth) return b.yearMonth.localeCompare(a.yearMonth);
-        return a.employeeId.localeCompare(b.employeeId);
-      });
-    } catch (error) {
-      throw friendlyError(error, "อ่านข้อมูล Service Incentive ไม่สำเร็จ");
-    }
-  }
+      const settings = settingsSnapshot.exists() ? settingsSnapshot.data() : {};
+      const employees = employeesSnapshot.docs.map((snapshot) => ({
+        id: snapshot.id,
+        name: String(snapshot.data().name || ""),
+      })).filter((person) => person.name);
 
-  async function loadEvaluationSummary() {
-    assertReady();
-    try {
-      const snapshots = await firestoreApi.getDocs(firestoreApi.collection(db, "evaluations"));
-      const years = new Set();
-      let latest = "";
-      snapshots.docs.forEach((snapshot) => {
+      const records = {};
+      evaluationsSnapshot.docs.forEach((snapshot) => {
         const row = snapshot.data();
-        if (Number.isFinite(Number(row.year))) years.add(Number(row.year));
-        const updated = toIso(row.updatedAt);
-        if (updated > latest) latest = updated;
+        const year = Number(row.year);
+        const month = Number(row.month);
+        if (!row.employeeId || !Number.isInteger(year) || !Number.isInteger(month)) return;
+        records[`${year}::${row.employeeId}::${month}`] = {
+          employeeId: row.employeeId,
+          month,
+          scores: Array.isArray(row.scores) ? row.scores.map(Number) : [],
+          note: String(row.note || ""),
+          source: String(row.source || "KPI Flow"),
+          updatedAt: toIso(row.updatedAt),
+          version: Number(row.version) || 1,
+        };
       });
-      return { count: snapshots.size, years: [...years].sort((a, b) => a - b), latestUpdatedAt: latest };
-    } catch (error) {
-      throw friendlyError(error, "อ่านสรุป Performance Summary ไม่สำเร็จ");
-    }
-  }
 
-  async function getMigrationStatus() {
-    assertReady();
-    try {
-      const snapshot = await firestoreApi.getDoc(firestoreApi.doc(db, "hubSettings", "main"));
-      if (!snapshot.exists()) return null;
-      const row = snapshot.data();
+      const recordYears = Object.keys(records).map((key) => Number(key.split("::")[0])).filter(Number.isFinite);
+      const configuredYears = Array.isArray(settings.years) ? settings.years.map(Number).filter(Number.isFinite) : [];
+      const activeYear = Number(settings.activeYear) || configuredYears.at(-1) || recordYears.at(-1) || 2569;
+      const years = [...new Set([...configuredYears, ...recordYears, activeYear])].sort((a, b) => a - b);
+
       return {
-        schemaVersion: Number(row.schemaVersion) || 0,
-        migrationId: String(row.migrationId || ""),
-        importedAt: toIso(row.importedAt),
-        importedBy: String(row.importedBy || ""),
-        counts: row.counts || {},
-        moduleStatus: row.moduleStatus || {},
+        schemaVersion: 4,
+        activeYear,
+        years,
+        updatedAt: toIso(settings.updatedAt),
+        employees,
+        records,
       };
     } catch (error) {
-      throw friendlyError(error, "อ่านสถานะ Migration ไม่สำเร็จ");
+      throw friendlyError(error, "อ่านข้อมูลจาก Firestore ไม่สำเร็จ");
     }
   }
 
-  async function loadHubSnapshot(yearMonth = "") {
-    assertReady();
-    try {
-      const [employees, incentives, evaluationSummary, migrationStatus] = await Promise.all([
-        loadEmployees(),
-        loadServiceIncentives(yearMonth),
-        loadEvaluationSummary(),
-        getMigrationStatus(),
-      ]);
-      return { employees, incentives, evaluationSummary, migrationStatus };
-    } catch (error) {
-      throw friendlyError(error, "โหลดข้อมูล Employee Hub ไม่สำเร็จ");
-    }
-  }
-
-  async function saveEmployee(input) {
-    assertReady();
+  async function saveEvaluation({ employeeId, year, month, scores, note, expectedVersion }) {
+    assertConfigured();
     const uid = currentUid();
-    const id = String(input.id || makeEmployeeId());
-    const fullName = String(input.fullName || "").normalize("NFC").trim().replace(/\s+/g, " ");
-    const employeeCode = String(input.employeeCode || "").trim().toUpperCase();
-    const startDate = String(input.startDate || "").trim();
-    const isActive = input.isActive !== false;
-    const sortOrder = Math.max(0, Math.trunc(Number(input.sortOrder) || 0));
-    const expectedVersion = Math.max(0, Math.trunc(Number(input.expectedVersion) || 0));
+    const normalizedScores = validateScores(scores);
+    const normalizedYear = Number(year);
+    const normalizedMonth = Number(month);
+    const normalizedNote = String(note || "").trim();
+    if (!Number.isInteger(normalizedYear) || normalizedYear < 2500 || normalizedYear > 3000) throw new Error("ปีประเมินไม่ถูกต้อง");
+    if (!Number.isInteger(normalizedMonth) || normalizedMonth < 0 || normalizedMonth > 11) throw new Error("เดือนประเมินไม่ถูกต้อง");
+    if (normalizedNote.length > 2000) throw new Error("หมายเหตุต้องไม่เกิน 2,000 ตัวอักษร");
 
-    if (fullName.length < 2 || fullName.length > 100) throw new Error("ชื่อพนักงานต้องยาว 2–100 ตัวอักษร");
-    if (employeeCode && !/^[A-Z0-9_-]{2,20}$/.test(employeeCode)) throw new Error("รหัสพนักงานใช้ A–Z, 0–9, _ หรือ - ความยาว 2–20 ตัวอักษร");
-    if (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) throw new Error("วันที่เริ่มงานต้องอยู่ในรูปแบบ YYYY-MM-DD");
-
-    const employeeRef = firestoreApi.doc(db, "employees", id);
-    const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
-    let before = null;
-    let oldNameHash = "";
-    const newNameHash = await hashText(normalizeName(fullName));
-    const newNameRef = firestoreApi.doc(db, "employeeNames", newNameHash);
-
-    try {
-      await firestoreApi.runTransaction(db, async (transaction) => {
-        const [snapshot, nameSnapshot] = await Promise.all([
-          transaction.get(employeeRef),
-          transaction.get(newNameRef),
-        ]);
-        before = snapshot.exists() ? snapshot.data() : null;
-        if (nameSnapshot.exists() && nameSnapshot.data().employeeId !== id) {
-          throw new Error("มีชื่อพนักงานนี้อยู่แล้ว");
-        }
-        const currentVersion = Number(before?.version) || 0;
-        if (snapshot.exists() && currentVersion !== expectedVersion) {
-          const conflict = new Error("VERSION_CONFLICT");
-          conflict.code = "VERSION_CONFLICT";
-          throw conflict;
-        }
-        if (before?.name) oldNameHash = await hashText(normalizeName(before.name));
-        const nextVersion = currentVersion + 1;
-        const data = {
-          name: fullName,
-          fullName,
-          nameNormalized: normalizeName(fullName),
-          employeeCode,
-          startDate,
-          isActive,
-          sortOrder,
-          legacyIds: before?.legacyIds || input.legacyIds || {},
-          source: String(before?.source || input.source || "Employee Hub"),
-          version: nextVersion,
-          createdAt: before?.createdAt || firestoreApi.serverTimestamp(),
-          createdBy: before?.createdBy || uid,
-          updatedAt: firestoreApi.serverTimestamp(),
-          updatedBy: uid,
-        };
-        transaction.set(employeeRef, data);
-        transaction.set(newNameRef, {
-          employeeId: id,
-          normalizedName: normalizeName(fullName),
-          createdAt: firestoreApi.serverTimestamp(),
-        });
-        transaction.set(auditRef, {
-          actorId: uid,
-          action: before ? "UPDATE_EMPLOYEE_MASTER" : "CREATE_EMPLOYEE_MASTER",
-          targetType: "employee",
-          targetId: id,
-          before: before || null,
-          after: { ...data, createdAt: null, updatedAt: null },
-          createdAt: firestoreApi.serverTimestamp(),
-        });
-      });
-
-      if (oldNameHash && oldNameHash !== newNameHash) {
-        try {
-          await firestoreApi.deleteDoc(firestoreApi.doc(db, "employeeNames", oldNameHash));
-        } catch (cleanupError) {
-          console.warn("ลบ Name Index เดิมไม่สำเร็จ แต่ข้อมูลพนักงานบันทึกแล้ว", cleanupError);
-        }
-      }
-
-      return employeeFromSnapshot(await firestoreApi.getDoc(employeeRef));
-    } catch (error) {
-      if (error?.code === "VERSION_CONFLICT" || error?.message === "VERSION_CONFLICT") throw error;
-      throw friendlyError(error, "บันทึกข้อมูลพนักงานไม่สำเร็จ");
-    }
-  }
-
-  async function saveServiceIncentive(input) {
-    assertReady();
-    const uid = currentUid();
-    const employeeId = String(input.employeeId || "");
-    const { yearMonth, year, month } = parseYearMonth(input.yearMonth);
-    const salesAmount = normalizeMoney(input.salesAmount, "ยอดขายของ");
-    const evaluationAmount = normalizeMoney(input.evaluationAmount, "ยอดประเมิน");
-    const timeAmount = normalizeMoney(input.timeAmount, "ยอดเวลา");
-    const totalAmount = normalizeMoney(salesAmount + evaluationAmount + timeAmount, "ยอดรวม");
-    const expectedVersion = Math.max(0, Math.trunc(Number(input.expectedVersion) || 0));
-    const documentId = `${employeeId}__${yearMonth}`;
-    const ref = firestoreApi.doc(db, "serviceIncentives", documentId);
+    const ref = firestoreApi.doc(db, "evaluations", evaluationId(normalizedYear, employeeId, normalizedMonth));
     const employeeRef = firestoreApi.doc(db, "employees", employeeId);
     const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
 
@@ -433,31 +280,24 @@
           transaction.get(ref),
         ]);
         if (!employeeSnapshot.exists()) throw new Error("ไม่พบพนักงานที่เลือก");
-        if (employeeSnapshot.data().isActive === false) throw new Error("พนักงานคนนี้ถูกปิดใช้งาน");
 
         const existing = existingSnapshot.exists() ? existingSnapshot.data() : null;
         const currentVersion = Number(existing?.version) || 0;
-        if (currentVersion !== expectedVersion) {
+        if (currentVersion !== (Number(expectedVersion) || 0)) {
           const conflict = new Error("VERSION_CONFLICT");
           conflict.code = "VERSION_CONFLICT";
           throw conflict;
         }
 
+        const nextVersion = currentVersion + 1;
         const payload = {
           employeeId,
-          yearMonth,
-          year,
-          month,
-          salesAmount,
-          evaluationAmount,
-          timeAmount,
-          totalAmount,
-          source: String(existing?.source || "Employee Hub / Firebase"),
-          ...(existing?.sourceRecordId ? { sourceRecordId: existing.sourceRecordId } : {}),
-          ...(existing?.sourceCreatedAt ? { sourceCreatedAt: existing.sourceCreatedAt } : {}),
-          ...(existing?.sourceUpdatedAt ? { sourceUpdatedAt: existing.sourceUpdatedAt } : {}),
-          ...(existing?.importedAt ? { importedAt: existing.importedAt } : {}),
-          version: currentVersion + 1,
+          year: normalizedYear,
+          month: normalizedMonth,
+          scores: normalizedScores,
+          note: normalizedNote,
+          source: "KPI Flow / Firebase",
+          version: nextVersion,
           createdAt: existing?.createdAt || firestoreApi.serverTimestamp(),
           createdBy: existing?.createdBy || uid,
           updatedAt: firestoreApi.serverTimestamp(),
@@ -466,43 +306,78 @@
         transaction.set(ref, payload);
         transaction.set(auditRef, {
           actorId: uid,
-          action: existing ? "UPDATE_SERVICE_INCENTIVE" : "CREATE_SERVICE_INCENTIVE",
-          targetType: "serviceIncentive",
-          targetId: documentId,
+          action: existing ? "UPDATE_EVALUATION" : "CREATE_EVALUATION",
+          targetType: "evaluation",
+          targetId: ref.id,
           before: existing || null,
           after: { ...payload, createdAt: null, updatedAt: null },
           createdAt: firestoreApi.serverTimestamp(),
         });
       });
-      return incentiveFromSnapshot(await firestoreApi.getDoc(ref));
+
+      const savedSnapshot = await firestoreApi.getDoc(ref);
+      const saved = savedSnapshot.data();
+      return {
+        employee_id: saved.employeeId,
+        year: Number(saved.year),
+        month: Number(saved.month),
+        scores: saved.scores.map(Number),
+        note: saved.note || "",
+        source: saved.source || "KPI Flow / Firebase",
+        updated_at: toIso(saved.updatedAt) || new Date().toISOString(),
+        version: Number(saved.version) || 1,
+      };
     } catch (error) {
       if (error?.code === "VERSION_CONFLICT" || error?.message === "VERSION_CONFLICT") throw error;
-      throw friendlyError(error, "บันทึก Service Incentive ไม่สำเร็จ");
+      throw friendlyError(error, "บันทึกคะแนนไม่สำเร็จ");
     }
   }
 
-  async function deleteServiceIncentive(documentId) {
-    assertReady();
+  async function addEmployee({ id, name }) {
+    assertConfigured();
     const uid = currentUid();
-    const ref = firestoreApi.doc(db, "serviceIncentives", documentId);
+    const normalizedName = String(name || "").trim().replace(/\s+/g, " ");
+    if (normalizedName.length < 2 || normalizedName.length > 80) throw new Error("ชื่อพนักงานต้องยาว 2–80 ตัวอักษร");
+    if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{1,79}$/.test(id)) throw new Error("รหัสพนักงานภายในระบบไม่ถูกต้อง");
+
+    const nameKey = await hashText(normalizeName(normalizedName));
+    const employeeRef = firestoreApi.doc(db, "employees", id);
+    const nameRef = firestoreApi.doc(db, "employeeNames", nameKey);
     const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+
     try {
       await firestoreApi.runTransaction(db, async (transaction) => {
-        const snapshot = await transaction.get(ref);
-        if (!snapshot.exists()) throw new Error("ไม่พบรายการที่ต้องการลบ");
-        transaction.delete(ref);
+        const [employeeSnapshot, nameSnapshot] = await Promise.all([
+          transaction.get(employeeRef),
+          transaction.get(nameRef),
+        ]);
+        if (employeeSnapshot.exists() || nameSnapshot.exists()) throw new Error("มีชื่อหรือรหัสพนักงานนี้อยู่แล้ว");
+        transaction.set(employeeRef, {
+          name: normalizedName,
+          nameNormalized: normalizeName(normalizedName),
+          createdAt: firestoreApi.serverTimestamp(),
+          createdBy: uid,
+          updatedAt: firestoreApi.serverTimestamp(),
+          updatedBy: uid,
+        });
+        transaction.set(nameRef, {
+          employeeId: id,
+          normalizedName: normalizeName(normalizedName),
+          createdAt: firestoreApi.serverTimestamp(),
+        });
         transaction.set(auditRef, {
           actorId: uid,
-          action: "DELETE_SERVICE_INCENTIVE",
-          targetType: "serviceIncentive",
-          targetId: documentId,
-          before: snapshot.data(),
-          after: null,
+          action: "CREATE_EMPLOYEE",
+          targetType: "employee",
+          targetId: id,
+          before: null,
+          after: { name: normalizedName },
           createdAt: firestoreApi.serverTimestamp(),
         });
       });
+      return { id, name: normalizedName };
     } catch (error) {
-      throw friendlyError(error, "ลบ Service Incentive ไม่สำเร็จ");
+      throw friendlyError(error, "เพิ่มพนักงานไม่สำเร็จ");
     }
   }
 
@@ -520,117 +395,239 @@
     }
   }
 
-  async function importMigrationSeed(seed) {
-    assertReady();
+  async function deleteEmployee(employeeId) {
+    assertConfigured();
     const uid = currentUid();
-    if (!seed || Number(seed.schemaVersion) !== 1) throw new Error("Migration Seed ไม่ถูกต้องหรือไม่รองรับ");
-    if (!Array.isArray(seed.employees) || !Array.isArray(seed.serviceIncentives)) throw new Error("Migration Seed มีข้อมูลไม่ครบ");
-
     try {
-      const [employeeSnapshots, incentiveSnapshots] = await Promise.all([
-        firestoreApi.getDocs(firestoreApi.collection(db, "employees")),
-        firestoreApi.getDocs(firestoreApi.collection(db, "serviceIncentives")),
-      ]);
-      const existingEmployees = new Map(employeeSnapshots.docs.map((snapshot) => [snapshot.id, snapshot.data()]));
-      const existingIncentives = new Map(incentiveSnapshots.docs.map((snapshot) => [snapshot.id, snapshot.data()]));
-      const operations = [];
-
-      for (const person of seed.employees) {
-        const id = String(person.id || "");
-        const fullName = String(person.fullName || "").normalize("NFC").trim().replace(/\s+/g, " ");
-        if (!id || !fullName) throw new Error("พบข้อมูลพนักงานใน Seed ไม่ครบ");
-        const existing = existingEmployees.get(id) || null;
-        const payload = {
-          name: fullName,
-          fullName,
-          nameNormalized: normalizeName(fullName),
-          employeeCode: String(person.employeeCode || "").toUpperCase(),
-          startDate: String(person.startDate || ""),
-          isActive: person.isActive !== false,
-          sortOrder: Math.max(0, Math.trunc(Number(person.sortOrder) || 0)),
-          legacyIds: person.legacyIds || {},
-          source: "Employee Hub Migration",
-          version: Math.max(1, Number(existing?.version) || 1),
-          updatedAt: firestoreApi.serverTimestamp(),
-          updatedBy: uid,
-          migratedAt: firestoreApi.serverTimestamp(),
-        };
-        if (!existing) {
-          payload.createdAt = firestoreApi.serverTimestamp();
-          payload.createdBy = uid;
-        }
-        operations.push({ type: "set", ref: firestoreApi.doc(db, "employees", id), data: payload, options: { merge: true } });
-        const nameHash = await hashText(normalizeName(fullName));
-        operations.push({
+      const employeeRef = firestoreApi.doc(db, "employees", employeeId);
+      const employeeSnapshot = await firestoreApi.getDoc(employeeRef);
+      if (!employeeSnapshot.exists()) throw new Error("ไม่พบพนักงานที่ต้องการลบ");
+      const employee = employeeSnapshot.data();
+      const nameKey = await hashText(normalizeName(employee.name));
+      const evaluationsQuery = firestoreApi.query(
+        firestoreApi.collection(db, "evaluations"),
+        firestoreApi.where("employeeId", "==", employeeId)
+      );
+      const evaluationSnapshots = await firestoreApi.getDocs(evaluationsQuery);
+      const operations = evaluationSnapshots.docs.map((snapshot) => ({ type: "delete", ref: snapshot.ref }));
+      operations.push(
+        { type: "delete", ref: firestoreApi.doc(db, "employeeNames", nameKey) },
+        { type: "delete", ref: employeeRef },
+        {
           type: "set",
-          ref: firestoreApi.doc(db, "employeeNames", nameHash),
-          data: { employeeId: id, normalizedName: normalizeName(fullName), createdAt: firestoreApi.serverTimestamp() },
-        });
-      }
+          ref: firestoreApi.doc(firestoreApi.collection(db, "auditLogs")),
+          data: {
+            actorId: uid,
+            action: "DELETE_EMPLOYEE",
+            targetType: "employee",
+            targetId: employeeId,
+            before: { name: employee.name, evaluationCount: evaluationSnapshots.size },
+            after: null,
+            createdAt: firestoreApi.serverTimestamp(),
+          },
+        }
+      );
+      await commitOperations(operations);
+    } catch (error) {
+      throw friendlyError(error, "ลบพนักงานไม่สำเร็จ");
+    }
+  }
 
-      seed.serviceIncentives.forEach((record) => {
-        const id = String(record.id || `${record.employeeId}__${record.yearMonth}`);
-        const existing = existingIncentives.get(id) || null;
-        const sourceCreatedAt = timestampFromIso(record.sourceCreatedAt);
-        const sourceUpdatedAt = timestampFromIso(record.sourceUpdatedAt);
-        const payload = {
-          employeeId: String(record.employeeId || ""),
-          yearMonth: String(record.yearMonth || ""),
-          year: Number(record.year),
-          month: Number(record.month),
-          salesAmount: normalizeMoney(record.salesAmount, "ยอดขายของ"),
-          evaluationAmount: normalizeMoney(record.evaluationAmount, "ยอดประเมิน"),
-          timeAmount: normalizeMoney(record.timeAmount, "ยอดเวลา"),
-          totalAmount: normalizeMoney(record.totalAmount, "ยอดรวม"),
-          source: String(record.source || "Service Incentive.xlsx"),
-          sourceRecordId: String(record.sourceRecordId || ""),
-          sourceCreatedAt,
-          sourceUpdatedAt,
-          version: Math.max(1, Number(existing?.version) || Number(record.version) || 1),
-          createdAt: existing?.createdAt || sourceCreatedAt || firestoreApi.serverTimestamp(),
-          createdBy: existing?.createdBy || uid,
+  async function addEvaluationYear(year) {
+    assertConfigured();
+    const uid = currentUid();
+    const normalizedYear = Number(year);
+    if (!Number.isInteger(normalizedYear) || normalizedYear < 2500 || normalizedYear > 3000) throw new Error("ปีประเมินไม่ถูกต้อง");
+    const settingsRef = firestoreApi.doc(db, "settings", "main");
+    const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+    try {
+      let result = null;
+      await firestoreApi.runTransaction(db, async (transaction) => {
+        const snapshot = await transaction.get(settingsRef);
+        const current = snapshot.exists() ? snapshot.data() : {};
+        const years = [...new Set([...(Array.isArray(current.years) ? current.years.map(Number) : []), normalizedYear])]
+          .filter(Number.isFinite)
+          .sort((a, b) => a - b);
+        result = { active_year: normalizedYear, years };
+        transaction.set(settingsRef, {
+          activeYear: normalizedYear,
+          years,
           updatedAt: firestoreApi.serverTimestamp(),
           updatedBy: uid,
-          importedAt: firestoreApi.serverTimestamp(),
-        };
-        operations.push({ type: "set", ref: firestoreApi.doc(db, "serviceIncentives", id), data: payload });
+        });
+        transaction.set(auditRef, {
+          actorId: uid,
+          action: "ADD_YEAR",
+          targetType: "settings",
+          targetId: "main",
+          before: { activeYear: current.activeYear || null, years: current.years || [] },
+          after: { activeYear: normalizedYear, years },
+          createdAt: firestoreApi.serverTimestamp(),
+        });
       });
+      return result;
+    } catch (error) {
+      throw friendlyError(error, "เริ่มปีประเมินใหม่ไม่สำเร็จ");
+    }
+  }
 
+  function stateToOperations(seedState, uid) {
+    const operations = [];
+    const employees = Array.isArray(seedState.employees) ? seedState.employees : [];
+    employees.forEach((person) => {
+      const normalized = normalizeName(person.name);
       operations.push({
         type: "set",
-        ref: firestoreApi.doc(db, "hubSettings", "main"),
+        ref: firestoreApi.doc(db, "employees", person.id),
         data: {
-          schemaVersion: 1,
-          migrationId: String(seed.migrationId || "employee-hub-phase-1"),
-          counts: seed.counts || {},
-          moduleStatus: seed.moduleStatus || {},
-          decisions: Array.isArray(seed.decisions) ? seed.decisions : [],
-          importedAt: firestoreApi.serverTimestamp(),
-          importedBy: uid,
+          name: person.name,
+          nameNormalized: normalized,
+          createdAt: firestoreApi.serverTimestamp(),
+          createdBy: uid,
+          updatedAt: firestoreApi.serverTimestamp(),
+          updatedBy: uid,
+        },
+        // รักษา employeeCode, fullName, startDate และ legacyIds ของ Employee Hub
+        options: { merge: true },
+      });
+    });
+
+    Object.entries(seedState.records || {}).forEach(([key, record]) => {
+      const [year] = key.split("::");
+      const normalizedScores = validateScores(record.scores);
+      const normalizedYear = Number(year);
+      const normalizedMonth = Number(record.month);
+      operations.push({
+        type: "set",
+        ref: firestoreApi.doc(db, "evaluations", evaluationId(normalizedYear, record.employeeId, normalizedMonth)),
+        data: {
+          employeeId: record.employeeId,
+          year: normalizedYear,
+          month: normalizedMonth,
+          scores: normalizedScores,
+          note: String(record.note || "").slice(0, 2000),
+          source: String(record.source || "KPI Flow seed").slice(0, 160),
+          version: Math.max(1, Number(record.version) || 1),
+          createdAt: firestoreApi.serverTimestamp(),
+          createdBy: uid,
           updatedAt: firestoreApi.serverTimestamp(),
           updatedBy: uid,
         },
       });
+    });
 
-      operations.push({
+    operations.push({
+      type: "set",
+      ref: firestoreApi.doc(db, "settings", "main"),
+      data: {
+        activeYear: Number(seedState.activeYear) || 2569,
+        years: [...new Set((seedState.years || [2569]).map(Number).filter(Number.isFinite))].sort((a, b) => a - b),
+        updatedAt: firestoreApi.serverTimestamp(),
+        updatedBy: uid,
+      },
+    });
+    return operations;
+  }
+
+  async function replaceDatabase(nextState, action) {
+    assertConfigured();
+    const uid = currentUid();
+    try {
+      const [evaluationSnapshots, nameSnapshots, employeeSnapshots] = await Promise.all([
+        firestoreApi.getDocs(firestoreApi.collection(db, "evaluations")),
+        firestoreApi.getDocs(firestoreApi.collection(db, "employeeNames")),
+        firestoreApi.getDocs(firestoreApi.collection(db, "employees")),
+      ]);
+
+      // เขียนข้อมูลชุดใหม่ก่อน แล้วค่อยลบ Document ที่ไม่อยู่ในชุดใหม่
+      // หากเครือข่ายขัดข้องระหว่างทาง การลองซ้ำจะปลอดภัยกว่าการลบทั้งหมดก่อนเขียน
+      const writeOperations = stateToOperations(nextState, uid);
+      const desiredEmployeeIds = new Set();
+      const desiredNameIds = new Set();
+      const desiredEvaluationIds = new Set();
+
+      for (const person of nextState.employees || []) {
+        desiredEmployeeIds.add(person.id);
+        const nameKey = await hashText(normalizeName(person.name));
+        desiredNameIds.add(nameKey);
+        writeOperations.push({
+          type: "set",
+          ref: firestoreApi.doc(db, "employeeNames", nameKey),
+          data: {
+            employeeId: person.id,
+            normalizedName: normalizeName(person.name),
+            createdAt: firestoreApi.serverTimestamp(),
+          },
+        });
+      }
+
+      Object.entries(nextState.records || {}).forEach(([key, record]) => {
+        const [year] = key.split("::");
+        desiredEvaluationIds.add(evaluationId(Number(year), record.employeeId, Number(record.month)));
+      });
+
+      await commitOperations(writeOperations);
+
+      const staleDeletes = [
+        ...evaluationSnapshots.docs
+          .filter((snapshot) => !desiredEvaluationIds.has(snapshot.id))
+          .map((snapshot) => ({ type: "delete", ref: snapshot.ref })),
+        // Employee Hub เป็นเจ้าของ Employee Master จึงไม่ลบ employees/employeeNames
+        // จากคำสั่ง Reset หรือ Import ของ Performance Summary
+      ];
+      await commitOperations(staleDeletes);
+
+      await commitOperations([{
         type: "set",
         ref: firestoreApi.doc(firestoreApi.collection(db, "auditLogs")),
         data: {
           actorId: uid,
-          action: "IMPORT_EMPLOYEE_HUB_PHASE_1",
+          action,
           targetType: "database",
-          targetId: String(seed.migrationId || "employee-hub-phase-1"),
+          targetId: "kpi-flow",
           before: null,
-          after: { counts: seed.counts || {}, moduleStatus: seed.moduleStatus || {} },
+          after: {
+            employeeCount: (nextState.employees || []).length,
+            evaluationCount: Object.keys(nextState.records || {}).length,
+            years: nextState.years || [],
+          },
           createdAt: firestoreApi.serverTimestamp(),
         },
-      });
-
-      await commitOperations(operations);
-      return { employeeCount: seed.employees.length, incentiveCount: seed.serviceIncentives.length };
+      }]);
     } catch (error) {
-      throw friendlyError(error, "นำเข้าข้อมูล Migration ไม่สำเร็จ");
+      throw friendlyError(error, action === "RESET_DATABASE" ? "รีเซ็ตฐานข้อมูลไม่สำเร็จ" : "นำเข้าข้อมูลไม่สำเร็จ");
     }
+  }
+
+  async function resetDatabase(seedState) {
+    return replaceDatabase(seedState, "RESET_DATABASE");
+  }
+
+  async function importState(importState) {
+    return replaceDatabase(importState, "IMPORT_DATABASE");
+  }
+
+  function subscribe(onDatabaseChange) {
+    assertConfigured();
+    unsubscribe();
+    const safeCallback = (snapshot) => {
+      if (snapshot?.metadata?.hasPendingWrites) return;
+      onDatabaseChange(snapshot);
+    };
+    const onError = (error) => console.warn("Firestore realtime listener error", error);
+    unsubscribeCallbacks = [
+      firestoreApi.onSnapshot(firestoreApi.doc(db, "settings", "main"), safeCallback, onError),
+      firestoreApi.onSnapshot(firestoreApi.collection(db, "employees"), safeCallback, onError),
+      firestoreApi.onSnapshot(firestoreApi.collection(db, "evaluations"), safeCallback, onError),
+    ];
+    return unsubscribeCallbacks;
+  }
+
+  function unsubscribe() {
+    unsubscribeCallbacks.forEach((callback) => {
+      try { callback(); } catch (error) { console.warn(error); }
+    });
+    unsubscribeCallbacks = [];
   }
 
   const api = Object.freeze({
@@ -639,17 +636,17 @@
     signOut,
     getAuthenticatedUser,
     getProfile,
-    loadEmployees,
-    loadServiceIncentives,
-    loadEvaluationSummary,
-    getMigrationStatus,
-    loadHubSnapshot,
-    saveEmployee,
-    saveServiceIncentive,
-    deleteServiceIncentive,
-    importMigrationSeed,
+    loadState,
+    saveEvaluation,
+    addEmployee,
+    deleteEmployee,
+    addEvaluationYear,
+    resetDatabase,
+    importState,
+    subscribe,
+    unsubscribe,
   });
 
-  global.EmployeeHubDatabase = api;
-  global.EmployeeHubDatabaseReady = initializeSdk().then(() => api);
+  global.KpiDatabase = api;
+  global.KpiDatabaseReady = initializeSdk().then(() => api);
 })(window);
