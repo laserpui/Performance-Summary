@@ -3,13 +3,17 @@
 // คัดลอกค่า firebaseConfig จาก Firebase Console > Project settings > Your apps > Web app
 // ค่าเหล่านี้เป็นตัวระบุโปรเจกต์สำหรับ Firebase Web SDK ไม่ใช่รหัสผ่านฐานข้อมูล
 // ความปลอดภัยของข้อมูลต้องควบคุมด้วย Firebase Authentication + Firestore Security Rules
-window.KPI_FIREBASE_CONFIG = Object.freeze({
-  apiKey: "REPLACE_ME",
-  authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT_ID.firebasestorage.app",
-  messagingSenderId: "REPLACE_ME",
-  appId: "REPLACE_ME",
+// Your web app's Firebase configuration
+// For Firebase JS SDK v7.20.0 and later, measurementId is optional
+const firebaseConfig = {
+  apiKey: "AIzaSyBWhhjpHjaSsKbgLiYtHl7cndQoVgFC43Y",
+  authDomain: "performance-summary-62d48.firebaseapp.com",
+  projectId: "performance-summary-62d48",
+  storageBucket: "performance-summary-62d48.firebasestorage.app",
+  messagingSenderId: "457203754131",
+  appId: "1:457203754131:web:3a5039ce0715e12b719966",
+  measurementId: "G-3PX9ZL3BLP"
+};
 
   // ตัวเลือกเสริม: ใส่ reCAPTCHA Enterprise site key หลังตั้งค่า Firebase App Check
   // เว้นว่างไว้ระหว่างการทดสอบได้ และเปิด Enforcement หลังตรวจสอบ Metrics แล้ว
