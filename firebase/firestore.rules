@@ -1,0 +1,194 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function profilePath() {
+      return /databases/$(database)/documents/profiles/$(request.auth.uid);
+    }
+
+    function hasActiveProfile() {
+      return signedIn()
+        && exists(profilePath())
+        && get(profilePath()).data.isActive == true;
+    }
+
+    function role() {
+      return hasActiveProfile() ? get(profilePath()).data.role : 'none';
+    }
+
+    function isAdmin() {
+      return role() == 'admin';
+    }
+
+    function canEvaluate() {
+      return role() == 'admin' || role() == 'evaluator';
+    }
+
+    function validRole(value) {
+      return value == 'viewer' || value == 'evaluator' || value == 'admin';
+    }
+
+    function validYear(value) {
+      return value is int && value >= 2500 && value <= 3000;
+    }
+
+    function validMonth(value) {
+      return value is int && value >= 0 && value <= 11;
+    }
+
+    function validScore(value) {
+      return value is int && value >= 20 && value <= 100 && value % 5 == 0;
+    }
+
+    function validScores(scores) {
+      return scores is list
+        && scores.size() == 6
+        && validScore(scores[0])
+        && validScore(scores[1])
+        && validScore(scores[2])
+        && validScore(scores[3])
+        && validScore(scores[4])
+        && validScore(scores[5]);
+    }
+
+    function validProfile(data) {
+      return data.keys().hasOnly(['displayName', 'role', 'isActive'])
+        && data.displayName is string
+        && data.displayName.size() <= 100
+        && validRole(data.role)
+        && data.isActive is bool;
+    }
+
+    function validSettings(data) {
+      return data.keys().hasOnly(['activeYear', 'years', 'updatedAt', 'updatedBy'])
+        && validYear(data.activeYear)
+        && data.years is list
+        && data.years.size() >= 1
+        && data.years.size() <= 100
+        && data.activeYear in data.years
+        && data.updatedAt == request.time
+        && data.updatedBy == request.auth.uid;
+    }
+
+    function validEmployee(data) {
+      return data.keys().hasOnly([
+          'name', 'nameNormalized', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'
+        ])
+        && data.name is string
+        && data.name.size() >= 2
+        && data.name.size() <= 80
+        && data.nameNormalized is string
+        && data.nameNormalized.size() >= 2
+        && data.nameNormalized.size() <= 80
+        && data.createdAt is timestamp
+        && data.createdBy is string
+        && data.updatedAt == request.time
+        && data.updatedBy == request.auth.uid;
+    }
+
+    function validEvaluation(data) {
+      return data.keys().hasOnly([
+          'employeeId', 'year', 'month', 'scores', 'note', 'source', 'version',
+          'createdAt', 'createdBy', 'updatedAt', 'updatedBy'
+        ])
+        && data.employeeId is string
+        && data.employeeId.size() >= 2
+        && data.employeeId.size() <= 80
+        && validYear(data.year)
+        && validMonth(data.month)
+        && validScores(data.scores)
+        && data.note is string
+        && data.note.size() <= 2000
+        && data.source is string
+        && data.source.size() <= 160
+        && data.version is int
+        && data.version >= 1
+        && data.createdAt is timestamp
+        && data.createdBy is string
+        && data.updatedAt == request.time
+        && data.updatedBy == request.auth.uid;
+    }
+
+    function immutableEvaluationFields() {
+      return request.resource.data.employeeId == resource.data.employeeId
+        && request.resource.data.year == resource.data.year
+        && request.resource.data.month == resource.data.month
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.createdBy == resource.data.createdBy;
+    }
+
+    match /profiles/{userId} {
+      allow get: if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+      allow create, update: if isAdmin() && validProfile(request.resource.data);
+      allow delete: if isAdmin() && request.auth.uid != userId;
+    }
+
+    match /settings/{settingId} {
+      allow read: if hasActiveProfile();
+      allow create, update: if isAdmin() && settingId == 'main' && validSettings(request.resource.data);
+      allow delete: if false;
+    }
+
+    match /employees/{employeeId} {
+      allow read: if hasActiveProfile();
+      allow create: if isAdmin()
+        && validEmployee(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.createdBy == request.auth.uid;
+      allow update: if isAdmin() && validEmployee(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /employeeNames/{nameHash} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin()
+        && request.resource.data.keys().hasOnly(['employeeId', 'normalizedName', 'createdAt'])
+        && request.resource.data.employeeId is string
+        && request.resource.data.normalizedName is string
+        && request.resource.data.createdAt == request.time;
+      allow delete: if isAdmin();
+    }
+
+    match /evaluations/{evaluationId} {
+      allow read: if hasActiveProfile();
+      allow create: if validEvaluation(request.resource.data)
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.createdBy == request.auth.uid
+        && (isAdmin() || (canEvaluate() && request.resource.data.version == 1));
+      allow update: if validEvaluation(request.resource.data)
+        && immutableEvaluationFields()
+        && (
+          isAdmin()
+          || (canEvaluate() && request.resource.data.version == resource.data.version + 1)
+        );
+      allow delete: if isAdmin();
+    }
+
+    match /auditLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if hasActiveProfile()
+        && request.resource.data.keys().hasOnly([
+          'actorId', 'action', 'targetType', 'targetId', 'before', 'after', 'createdAt'
+        ])
+        && request.resource.data.actorId == request.auth.uid
+        && request.resource.data.action is string
+        && request.resource.data.action.size() >= 3
+        && request.resource.data.action.size() <= 50
+        && request.resource.data.targetType is string
+        && request.resource.data.targetType.size() <= 40
+        && request.resource.data.targetId is string
+        && request.resource.data.targetId.size() <= 160
+        && request.resource.data.createdAt == request.time;
+      allow update, delete: if false;
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
