@@ -679,9 +679,12 @@ function vacationEntitlement(employee, year, settings) {
   if (!settings?.configured) return null;
   const referenceDate = settings.vacationReference === "yearEnd" ? `${year}-12-31` : `${year}-01-01`;
   const years = fullYearsBetween(employee.startDate, referenceDate);
-  if (years >= 5) return Number(settings.vacationAfter5Years) || 0;
-  if (years >= 3) return Number(settings.vacationAfter3Years) || 0;
-  if (years >= 1) return Number(settings.vacationAfter1Year) || 0;
+  if (years >= 15) return Number(settings.vacationAfter15Years) || 15;
+  if (years >= 12) return Number(settings.vacationAfter12Years) || 14;
+  if (years >= 9) return Number(settings.vacationAfter9Years) || 12;
+  if (years >= 6) return Number(settings.vacationAfter6Years) || 10;
+  if (years >= 3) return Number(settings.vacationAfter3Years) || 8;
+  if (years >= 1) return Number(settings.vacationAfter1Year) || 6;
   return 0;
 }
 
@@ -845,7 +848,7 @@ function renderLeaveBalanceSection() {
     <article class="panel">
       <div class="panel-head"><div><h2>สิทธิ์ลาคงเหลือ พ.ศ. ${Number(state.workdayYear) + 543}</h2><p>คำนวณจากวันลาที่บันทึกและกฎบริษัทที่ตั้งค่า</p></div><div class="panel-actions"><select id="balanceYearFilter">${[state.workdayYear, ...[...new Set(state.leaveRecords.map((record) => record.year))].filter((year) => year !== Number(state.workdayYear)).sort((a,b)=>b-a)].map((year)=>`<option value="${year}" ${Number(year)===Number(state.workdayYear)?"selected":""}>พ.ศ. ${Number(year)+543}</option>`).join("")}</select><button id="workdaySettingsButton" class="button button-secondary button-small" type="button"><i data-lucide="settings-2"></i>ตั้งค่าสิทธิ์</button></div></div>
       ${settings.configured
-        ? `<div class="notice notice-info"><i data-lucide="info"></i><div>พักร้อนคำนวณอายุงาน ณ <strong>${settings.vacationReference === "yearEnd" ? "สิ้นปี" : "วันที่ 1 มกราคม"}</strong> · อัปเดต ${formatDate(settings.updatedAt)}</div></div>`
+        ? `<div class="notice notice-info"><i data-lucide="info"></i><div>พักร้อนตามเกณฑ์ 6/8/10/12/14/15 วัน และคำนวณอายุงาน ณ <strong>${settings.vacationReference === "yearEnd" ? "สิ้นปี" : "วันที่ 1 มกราคม"}</strong> · อัปเดต ${formatDate(settings.updatedAt)}</div></div>`
         : `<div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div><strong>ยังไม่ได้ตั้งค่าสิทธิ์วันลาของบริษัท</strong><br>ระบบจะแสดงจำนวนวันที่ใช้แล้ว แต่ยังไม่แสดงยอดคงเหลือจนกว่าจะบันทึกกฎในปุ่ม “ตั้งค่าสิทธิ์”</div></div>`}
       <div class="table-wrap" style="margin-top:16px"><table class="balance-table">
         <thead><tr><th>รหัส</th><th>ชื่อพนักงาน</th><th>อายุงาน</th><th class="money">ลาป่วย ใช้/สิทธิ์/คงเหลือ</th><th class="money">ลากิจ ใช้/สิทธิ์/คงเหลือ</th><th class="money">พักร้อน ใช้/สิทธิ์/คงเหลือ</th><th class="money">ลาบวช</th><th class="money">ลาอื่น</th></tr></thead>
@@ -1006,14 +1009,12 @@ function openWorkdaySettingsModal() {
   els.modalRoot.innerHTML = `
     <div class="modal-backdrop"><section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="workdaySettingsTitle">
       <div class="modal-head"><div><p class="eyebrow">WORKDAY SETTINGS</p><h2 id="workdaySettingsTitle">ตั้งค่าสิทธิ์วันลา</h2></div><button id="closeModalButton" class="icon-button" type="button"><i data-lucide="x"></i></button></div>
-      <div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div>กรอกตามระเบียบบริษัทจริง ระบบจะไม่กำหนดจำนวนวันแทนคุณโดยอัตโนมัติ</div></div>
+      <div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div>กรอกสิทธิลาป่วยและลากิจตามระเบียบบริษัท ส่วนพักร้อนใช้เกณฑ์ที่ได้รับการยืนยันแล้ว</div></div>
       <form id="workdaySettingsForm" style="margin-top:16px">
         <div class="form-grid">
           <div class="field"><label for="sickAnnualDays">ลาป่วยต่อปี</label><input id="sickAnnualDays" type="number" min="0" max="365" step="0.5" required value="${settings.sickAnnualDays ?? ""}" /></div>
           <div class="field"><label for="personalAnnualDays">ลากิจต่อปี</label><input id="personalAnnualDays" type="number" min="0" max="365" step="0.5" required value="${settings.personalAnnualDays ?? ""}" /></div>
-          <div class="field"><label for="vacationAfter1Year">พักร้อน อายุงาน 1 ปีขึ้นไป</label><input id="vacationAfter1Year" type="number" min="0" max="365" step="0.5" required value="${settings.vacationAfter1Year ?? ""}" /></div>
-          <div class="field"><label for="vacationAfter3Years">พักร้อน อายุงาน 3 ปีขึ้นไป</label><input id="vacationAfter3Years" type="number" min="0" max="365" step="0.5" required value="${settings.vacationAfter3Years ?? ""}" /></div>
-          <div class="field"><label for="vacationAfter5Years">พักร้อน อายุงาน 5 ปีขึ้นไป</label><input id="vacationAfter5Years" type="number" min="0" max="365" step="0.5" required value="${settings.vacationAfter5Years ?? ""}" /></div>
+          <div class="field field-full"><label>เกณฑ์วันลาพักร้อนตามอายุงาน</label><div class="table-wrap compact-policy-table"><table><thead><tr><th>อายุงาน</th><th class="money">สิทธิ์พักร้อน</th></tr></thead><tbody><tr><td>ครบ 1–2 ปี</td><td class="money">6 วัน</td></tr><tr><td>ครบ 3–5 ปี</td><td class="money">8 วัน</td></tr><tr><td>ครบ 6–8 ปี</td><td class="money">10 วัน</td></tr><tr><td>ครบ 9–11 ปี</td><td class="money">12 วัน</td></tr><tr><td>ครบ 12–14 ปี</td><td class="money">14 วัน</td></tr><tr><td>ครบ 15 ปีขึ้นไป</td><td class="money">15 วัน</td></tr></tbody></table></div></div>
           <div class="field"><label for="vacationReference">คำนวณอายุงาน ณ</label><select id="vacationReference"><option value="jan1" ${settings.vacationReference !== "yearEnd" ? "selected" : ""}>วันที่ 1 มกราคมของปี</option><option value="yearEnd" ${settings.vacationReference === "yearEnd" ? "selected" : ""}>วันที่ 31 ธันวาคมของปี</option></select></div>
           <div class="field field-full"><label for="workdaySettingsNote">หมายเหตุระเบียบบริษัท</label><textarea id="workdaySettingsNote" maxlength="1000">${escapeHtml(settings.note || "")}</textarea></div>
         </div>
@@ -1032,9 +1033,6 @@ function openWorkdaySettingsModal() {
       state.workdaySettings = await window.EmployeeHubDatabase.saveWorkdaySettings({
         sickAnnualDays: document.getElementById("sickAnnualDays").value,
         personalAnnualDays: document.getElementById("personalAnnualDays").value,
-        vacationAfter1Year: document.getElementById("vacationAfter1Year").value,
-        vacationAfter3Years: document.getElementById("vacationAfter3Years").value,
-        vacationAfter5Years: document.getElementById("vacationAfter5Years").value,
         vacationReference: document.getElementById("vacationReference").value,
         note: document.getElementById("workdaySettingsNote").value,
       });
