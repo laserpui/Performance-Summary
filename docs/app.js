@@ -1161,7 +1161,8 @@ function monthlyIsClosed() {
 }
 
 function monthlyDefaultDate() {
-  const today = new Date().toISOString().slice(0, 10);
+  const now = new Date();
+  const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   return today.startsWith(state.monthlyMonth) ? today : `${state.monthlyMonth}-01`;
 }
 
@@ -1547,9 +1548,14 @@ function bindMonthlyEntryEvents() {
   });
   document.getElementById("monthlyEntryForm")?.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const editing = monthlySelectedEntry();
-    const employeeId = editing?.employeeId || employeeSelect.value;
+    const selectedEmployeeId = employeeSelect.value;
     const date = dateInput.value;
+    const existingForSelection = selectedEmployeeId && selectedEmployeeId !== MONTHLY_ALL_EMPLOYEES_ID
+      ? state.monthlyEntries.find((entry) => entry.employeeId === selectedEmployeeId && entry.date === date) || null
+      : null;
+    const editing = state.monthlyEditingId ? monthlySelectedEntry() : existingForSelection;
+    const employeeId = editing?.employeeId || selectedEmployeeId;
+    if (!employeeId) return showToast("กรุณาเลือกพนักงาน", "warning");
     const status = statusSelect.value;
     const definition = monthlyStatusDefinition(status);
     const allowScores = definition.countsAsWork || offDayCheckbox.checked;
@@ -1805,11 +1811,8 @@ function bindMonthlyMigrationEvents() {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      if (file.size > 20 * 1024 * 1024) throw new Error("ไฟล์ Monthly Seed มีขนาดใหญ่เกิน 20 MB");
-      const fileText = (await file.text()).replace(/^\uFEFF/, "");
-      const parsed = JSON.parse(fileText);
+      const parsed = JSON.parse(await file.text());
       if (Number(parsed.schemaVersion) !== 3 || parsed.migrationType !== "employee-hub-monthly-performance-phase-3" || !Array.isArray(parsed.dailyPerformanceEntries) || !Array.isArray(parsed.monthlyPerformanceOverrides)) throw new Error("ไฟล์ Monthly Performance Phase 3 Seed ไม่ถูกต้อง");
-      if (!parsed.dailyPerformanceEntries.length) throw new Error("ไฟล์ Monthly Seed ไม่มีข้อมูลรายวัน");
       state.monthlySeed = parsed;
       state.monthlySeedFileName = file.name;
       renderMigration();
@@ -1830,21 +1833,11 @@ function bindMonthlyMigrationEvents() {
     try {
       if (!state.monthlySeed) throw new Error("กรุณาเลือกไฟล์ Monthly Performance Phase 3 Seed ก่อน");
       setBusy(true, "กำลังนำเข้า Monthly Performance");
-      const result = await window.EmployeeHubDatabase.importMonthlyPerformancePhase3Seed(
-        state.monthlySeed,
-        ({ completed, total, percent }) => {
-          setSyncStatus("syncing", `กำลังนำเข้า Monthly ${percent}% (${completed}/${total})`);
-        }
-      );
+      const result = await window.EmployeeHubDatabase.importMonthlyPerformancePhase3Seed(state.monthlySeed);
       showToast(`นำเข้า Monthly สำเร็จ: รายวัน ${result.entryCount} · Overrides ${result.overrideCount}`);
       state.monthlyDataKey = "";
       await refreshData({ quiet: true });
-    } catch (error) {
-      console.error("Monthly Phase 3 import failed", error);
-      const errorCode = error?.code ? ` [${error.code}]` : "";
-      showToast(`${error.message || "นำเข้า Monthly ไม่สำเร็จ"}${errorCode}`, "error", 9000);
-      setSyncStatus("error", "นำเข้าไม่สำเร็จ");
-    }
+    } catch (error) { showToast(error.message || "นำเข้า Monthly ไม่สำเร็จ", "error", 7000); setSyncStatus("error", "นำเข้าไม่สำเร็จ"); }
     finally { button.disabled = false; state.loading = false; }
   });
 }
