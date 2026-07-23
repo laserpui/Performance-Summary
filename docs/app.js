@@ -7,7 +7,6 @@ const VIEW_TITLES = Object.freeze({
   performance: "Performance Summary",
   workday: "Workday Insight",
   monthly: "Monthly Performance",
-  migration: "Migration Center",
   system: "ระบบและสำรองข้อมูล",
 });
 
@@ -116,7 +115,7 @@ function cacheElements() {
     "authGate", "authMessage", "loginForm", "loginEmail", "loginPassword", "loginButton", "authConfigHelp",
     "appShell", "mobileNav", "pageTitle", "databaseStatusDot", "databaseStatusLabel", "accountName", "accountRole",
     "logoutButton", "refreshButton", "syncBadge", "dashboardView", "employeesView", "serviceView", "performanceView",
-    "workdayView", "monthlyView", "migrationView", "systemView", "modalRoot", "toastRegion",
+    "workdayView", "monthlyView", "systemView", "modalRoot", "toastRegion",
   ].forEach((id) => { els[id] = document.getElementById(id); });
 }
 
@@ -302,7 +301,6 @@ function renderCurrentView() {
     performance: renderPerformance,
     workday: renderWorkday,
     monthly: renderMonthly,
-    migration: renderMigration,
     system: renderSystem,
   };
   renderers[state.currentView]?.();
@@ -326,7 +324,6 @@ function renderDashboard() {
   const monthRecords = recordsForMonth(month);
   const totals = sumRecords(monthRecords);
   const activeCount = activeEmployees().length;
-  const migrationReady = Boolean(state.migrationStatus);
   const workdayReady = Boolean(state.migrationStatus?.workdayMigrationId);
   const workdayCounts = state.migrationStatus?.workdayCounts || {};
   const employeesById = employeeMap();
@@ -362,7 +359,6 @@ function renderDashboard() {
         ${moduleCard({ icon: "chart-no-axes-combined", title: "Performance Summary", description: "บันทึกคะแนน KPI ประวัติ รายงาน และ Employee 360° ใน Web เดียว", status: "ใช้งานได้", statusClass: "badge-ready", view: "performance" })}
         ${moduleCard({ icon: "calendar-clock", title: "Workday Insight", description: "เวลาสายรายเดือน วันลา และสรุปสิทธิ์", status: workdayReady ? "ใช้งานได้" : "รอนำเข้า", statusClass: workdayReady ? "badge-ready" : "badge-progress", view: "workday" })}
         ${moduleCard({ icon: "clipboard-check", title: "Monthly Performance", description: "คะแนนรายวัน สถานะการทำงาน วันทำงานจริง และการปิดเดือน", status: state.migrationStatus?.monthlyPerformanceMigrationId ? "ใช้งานได้" : "รอนำเข้า", statusClass: state.migrationStatus?.monthlyPerformanceMigrationId ? "badge-ready" : "badge-progress", view: "monthly" })}
-        ${moduleCard({ icon: "database-zap", title: "Migration Center", description: "จัดการ Seed ของ Phase 1, Workday Phase 2 และ Monthly Phase 3", status: state.migrationStatus?.monthlyPerformanceMigrationId ? "Migration ครบ" : (workdayReady ? "Phase 2 แล้ว" : (migrationReady ? "Phase 1 แล้ว" : "พร้อมนำเข้า")), statusClass: migrationReady ? "badge-ready" : "badge-progress", view: "migration" })}
         ${moduleCard({ icon: "shield-check", title: "ระบบและสำรองข้อมูล", description: "ตรวจความสมบูรณ์ของข้อมูล ดาวน์โหลด Backup และตรวจรายการ Production", status: state.systemHealth?.status === "ok" ? "ระบบปกติ" : "พร้อมตรวจ", statusClass: state.systemHealth?.status === "ok" ? "badge-ready" : "badge-progress", view: "system" })}
       </div>
 
@@ -1351,7 +1347,7 @@ function renderWorkday() {
         </div>
         ${imported
           ? `<div class="notice notice-success"><i data-lucide="circle-check"></i><div>นำเข้าข้อมูลแล้ว: เวลาสาย <strong>${Number(counts.attendanceMonthly) || 0}</strong> รายการ · วันลา <strong>${Number(counts.leaveRecords) || 0}</strong> รายการ</div></div>`
-          : `<div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div>เปิด Migration Center แล้วเลือกไฟล์ <code>migration/workday-phase2-seed.json</code> ก่อนใช้งานข้อมูลเดิม</div></div>`}
+          : `<div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div>ไม่พบข้อมูล Workday เดิมในระบบ Production หากจำเป็นต้องกู้หรือนำเข้าข้อมูลย้อนหลัง ให้ใช้ชุด Migration Tools Archive ภายในบริษัท</div></div>`}
         <div class="tab-list" role="tablist" aria-label="Workday Insight">
           ${workdayTabButton("attendance", "clock-3", "เวลาสาย")}
           ${workdayTabButton("leave", "calendar-off", "วันลา")}
@@ -1945,7 +1941,7 @@ function renderMonthly() {
         </div>
         ${imported
           ? `<div class="notice notice-success"><i data-lucide="circle-check"></i><div>นำเข้าข้อมูลแล้ว: รายวัน <strong>${Number(counts.dailyPerformanceEntries) || 0}</strong> รายการ · Overrides <strong>${Number(counts.monthlyPerformanceOverrides) || 0}</strong> รายการ</div></div>`
-          : `<div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div>เปิด Migration Center แล้วเลือกไฟล์ <code>migration/monthly-performance-phase3-seed.json</code> ก่อนใช้งานข้อมูลเดิม</div></div>`}
+          : `<div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div>ไม่พบข้อมูล Monthly Performance เดิมในระบบ Production หากจำเป็นต้องกู้หรือนำเข้าข้อมูลย้อนหลัง ให้ใช้ชุด Migration Tools Archive ภายในบริษัท</div></div>`}
         <div class="monthly-toolbar">
           <div class="field compact-field"><label for="monthlyMonthPicker">เดือนประเมิน</label><input id="monthlyMonthPicker" type="month" value="${escapeHtml(state.monthlyMonth)}" /></div>
           <span class="badge ${monthlyMonthStatusBadge(status)}">${monthlyMonthStatusLabel(status)}</span>
@@ -2813,9 +2809,9 @@ function renderSystem() {
           <span class="badge ${health?.status === "ok" ? "badge-ready" : health?.status === "error" ? "badge-danger" : "badge-progress"}">${health ? (health.status === "ok" ? "ระบบปกติ" : health.status === "error" ? "พบข้อผิดพลาด" : "ควรตรวจสอบ") : "ยังไม่ได้ตรวจ"}</span>
         </div>
         <div class="system-action-grid">
-          <article class="system-action-card"><span class="kpi-icon"><i data-lucide="stethoscope"></i></span><h3>ตรวจสุขภาพระบบ</h3><p>ตรวจรหัสพนักงาน ข้อมูลอ้างอิง สูตรคะแนน ยอดรวม และความพร้อมของ Migration</p><button id="runSystemHealth" class="button button-primary" type="button"><i data-lucide="scan-line"></i>ตรวจตอนนี้</button></article>
+          <article class="system-action-card"><span class="kpi-icon"><i data-lucide="stethoscope"></i></span><h3>ตรวจสุขภาพระบบ</h3><p>ตรวจรหัสพนักงาน ข้อมูลอ้างอิง สูตรคะแนน ยอดรวม และสถานะการย้ายข้อมูลเดิม</p><button id="runSystemHealth" class="button button-primary" type="button"><i data-lucide="scan-line"></i>ตรวจตอนนี้</button></article>
           <article class="system-action-card"><span class="kpi-icon"><i data-lucide="database-backup"></i></span><h3>สำรอง Firestore</h3><p>ดาวน์โหลดข้อมูลทุก Collection รวม Audit Log เป็นไฟล์ JSON สำหรับเก็บภายในบริษัท</p><button id="downloadSystemBackup" class="button button-secondary" type="button"><i data-lucide="download"></i>ดาวน์โหลด Backup</button></article>
-          <article class="system-action-card"><span class="kpi-icon"><i data-lucide="clipboard-check"></i></span><h3>สถานะ Production</h3><p>${migrationComplete ? "Migration หลักครบแล้ว สามารถใช้ Web รวมเป็นระบบหลักได้" : "ยังมี Migration บางส่วนไม่ครบ กรุณาตรวจ Migration Center"}</p><button class="button button-ghost" data-view="migration" type="button"><i data-lucide="database-zap"></i>เปิด Migration Center</button></article>
+          <article class="system-action-card"><span class="kpi-icon"><i data-lucide="clipboard-check"></i></span><h3>สถานะ Production</h3><p>${migrationComplete ? "การย้ายข้อมูลหลักครบแล้ว และ Migration Center ถูกซ่อนจากระบบใช้งานจริง" : "พบว่าสถานะการย้ายข้อมูลบางส่วนไม่ครบ กรุณาใช้ Migration Tools Archive ภายในบริษัท"}</p><span class="badge ${migrationComplete ? "badge-ready" : "badge-progress"}">${migrationComplete ? "Production พร้อมใช้งาน" : "ควรตรวจสอบ"}</span></article>
         </div>
         ${state.systemLastBackup ? `<div class="notice notice-success" style="margin-top:16px"><i data-lucide="file-check-2"></i><div><strong>Backup ล่าสุดในรอบนี้</strong><br>${escapeHtml(state.systemLastBackup.fileName)} · ${formatNumber(state.systemLastBackup.bytes / 1024, 1)} KB<br><span class="backup-hash">SHA-256: ${escapeHtml(state.systemLastBackup.hash)}</span></div></div>` : ""}
       </article>
