@@ -2,6 +2,7 @@
 
 const VIEW_TITLES = Object.freeze({
   dashboard: "ภาพรวมระบบ",
+  executive: "Executive Dashboard",
   employees: "ฐานข้อมูลพนักงานกลาง",
   service: "Service Incentive",
   performance: "Performance Summary",
@@ -130,6 +131,10 @@ const state = {
   monthlyEditingId: "",
   monthlyHistoryEmployeeId: "",
   monthlyHistoryDate: "",
+  executiveMonth: currentYearMonth(),
+  executiveData: null,
+  executiveDataKey: "",
+  executiveLoading: false,
   closingMonth: currentYearMonth(),
   closingData: null,
   closingDataKey: "",
@@ -146,7 +151,7 @@ function cacheElements() {
   [
     "authGate", "authMessage", "loginForm", "loginEmail", "loginPassword", "loginButton", "authConfigHelp",
     "appShell", "mobileNav", "pageTitle", "databaseStatusDot", "databaseStatusLabel", "accountName", "accountRole",
-    "logoutButton", "refreshButton", "syncBadge", "dashboardView", "employeesView", "serviceView", "performanceView",
+    "logoutButton", "refreshButton", "syncBadge", "dashboardView", "executiveView", "employeesView", "serviceView", "performanceView",
     "workdayView", "monthlyView", "closingView", "systemView", "modalRoot", "toastRegion",
   ].forEach((id) => { els[id] = document.getElementById(id); });
 }
@@ -276,6 +281,7 @@ function showView(viewName) {
   document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === viewName));
   window.location.hash = viewName;
   renderCurrentView();
+  if (viewName === "executive") void refreshExecutiveData({ force: true, quiet: true });
   if (viewName === "performance") void refreshPerformanceData().then(() => {
     if (state.performanceTab === "sync" && !isLegacyAnnualPerformanceYear()) void refreshPerformanceSyncData();
     if (state.performanceTab === "incentive" && !isLegacyAnnualPerformanceYear()) void refreshPerformanceIncentiveData();
@@ -321,6 +327,7 @@ async function refreshData({ quiet = false } = {}) {
 function renderCurrentView() {
   const renderers = {
     dashboard: renderDashboard,
+    executive: renderExecutive,
     employees: renderEmployees,
     service: renderService,
     performance: renderPerformance,
@@ -380,6 +387,7 @@ function renderDashboard() {
       </div>
 
       <div class="module-grid">
+        ${moduleCard({ icon: "chart-spline", title: "Executive Dashboard", description: "KPI ผู้บริหาร แนวโน้ม รายการติดตาม และความเสี่ยงในหน้าเดียว", status: "พร้อมใช้งาน", statusClass: "badge-ready", view: "executive" })}
         ${moduleCard({ icon: "users-round", title: "Employee Master", description: "รายชื่อ รหัสพนักงาน วันที่เริ่มงาน และ Legacy IDs", status: state.employees.length ? "เชื่อมต่อแล้ว" : "ยังไม่มีข้อมูล", statusClass: state.employees.length ? "badge-ready" : "badge-progress", view: "employees" })}
         ${moduleCard({ icon: "badge-dollar-sign", title: "Service Incentive", description: "บันทึกยอดขาย ประเมิน เวลา และยอดรวมรายเดือน", status: state.incentives.length ? "ใช้งานได้" : "ยังไม่มีข้อมูล", statusClass: state.incentives.length ? "badge-ready" : "badge-progress", view: "service" })}
         ${moduleCard({ icon: "chart-no-axes-combined", title: "Performance Summary", description: "บันทึกคะแนน KPI ประวัติ รายงาน และ Employee 360° ใน Web เดียว", status: "ใช้งานได้", statusClass: "badge-ready", view: "performance" })}
@@ -408,6 +416,272 @@ function renderDashboard() {
         </article>
       </div>
     </div>`;
+}
+
+
+/* Phase 7 · Executive Dashboard */
+function executiveMonthParts(yearMonth = state.executiveMonth) {
+  const match = /^(\d{4})-(\d{2})$/.exec(String(yearMonth || ""));
+  const year = match ? Number(match[1]) : new Date().getFullYear();
+  const month = match ? Number(match[2]) : new Date().getMonth() + 1;
+  return { year, month, performanceYear: year + 543, performanceMonth: month - 1 };
+}
+
+async function refreshExecutiveData({ force = false, quiet = false } = {}) {
+  if (!state.user || !state.executiveMonth) return;
+  const key = state.executiveMonth;
+  if (!force && state.executiveDataKey === key && state.executiveData) return;
+  state.executiveLoading = true;
+  if (!quiet) setSyncStatus("syncing", "กำลังสรุปข้อมูลผู้บริหาร");
+  if (state.currentView === "executive") renderExecutive();
+  const { year, performanceYear } = executiveMonthParts(key);
+  try {
+    const [syncSnapshot, incentives, closure, leaveRecords, evaluationsYear] = await Promise.all([
+      window.EmployeeHubDatabase.loadPerformanceScoreSyncSnapshot(key),
+      window.EmployeeHubDatabase.loadServiceIncentives(key),
+      window.EmployeeHubDatabase.loadMonthClosure(key),
+      window.EmployeeHubDatabase.loadLeaveRecords(year),
+      window.EmployeeHubDatabase.loadPerformanceEvaluations(performanceYear),
+    ]);
+    state.executiveData = { syncSnapshot, incentives, closure, leaveRecords, evaluationsYear };
+    state.executiveDataKey = key;
+    setSyncStatus("online", "เชื่อมต่อแล้ว");
+  } catch (error) {
+    console.error(error);
+    setSyncStatus("error", "สรุปข้อมูลผู้บริหารไม่สำเร็จ");
+    if (!quiet) showToast(error.message || "โหลด Executive Dashboard ไม่สำเร็จ", "error", 6500);
+  } finally {
+    state.executiveLoading = false;
+    if (state.currentView === "executive") renderExecutive();
+  }
+}
+
+function executiveRankRows(rows) {
+  const sorted = [...rows].sort((a, b) => b.gpa - a.gpa || (Number(a.employee?.sortOrder) || 999999) - (Number(b.employee?.sortOrder) || 999999));
+  let rank = 0;
+  let previous = null;
+  return sorted.map((row, index) => {
+    if (previous === null || Math.abs(row.gpa - previous) > 0.000001) rank = index + 1;
+    previous = row.gpa;
+    return { ...row, rank };
+  });
+}
+
+function buildExecutiveSummary() {
+  const data = state.executiveData;
+  if (!data?.syncSnapshot) return null;
+  const { year, month, performanceMonth } = executiveMonthParts(state.executiveMonth);
+  const eligibleEmployees = employeesEligibleForMonth(state.executiveMonth);
+  const eligibleIds = new Set(eligibleEmployees.map((employee) => employee.id));
+  const employeesById = employeeMap();
+  const snapshot = data.syncSnapshot;
+  const incentives = (data.incentives || []).filter((row) => eligibleIds.has(row.employeeId));
+  const incentiveByEmployee = new Map(incentives.map((row) => [row.employeeId, row]));
+  const totals = sumRecords(incentives);
+  const attendance = (snapshot.attendance || []).filter((row) => eligibleIds.has(row.employeeId));
+  const attendanceByEmployee = new Map(attendance.map((row) => [row.employeeId, row]));
+  const leaveMonth = (data.leaveRecords || []).filter((row) => row.yearMonth === state.executiveMonth && eligibleIds.has(row.employeeId));
+  const leaveDaysByEmployee = new Map();
+  leaveMonth.forEach((row) => leaveDaysByEmployee.set(row.employeeId, (leaveDaysByEmployee.get(row.employeeId) || 0) + Number(row.days || 0)));
+  const totalLeaveDays = [...leaveDaysByEmployee.values()].reduce((sum, value) => sum + value, 0);
+  const totalLateMinutes = attendance.reduce((sum, row) => sum + Number(row.lateMinutes || 0), 0);
+  const lateEmployeeCount = attendance.filter((row) => Number(row.lateMinutes || 0) > 0).length;
+
+  const selectedEvaluations = (snapshot.evaluations || []).filter((row) => eligibleIds.has(row.employeeId));
+  const performanceRows = selectedEvaluations.map((evaluation) => {
+    if (evaluation.disciplinePending === true) return null;
+    const result = calculatePerformanceSummary(evaluation.scores);
+    const employee = employeesById.get(evaluation.employeeId);
+    return result && employee ? { employee, evaluation, ...result } : null;
+  }).filter(Boolean);
+  const ranked = executiveRankRows(performanceRows);
+  const averageGpa = ranked.length ? ranked.reduce((sum, row) => sum + row.gpa, 0) / ranked.length : 0;
+  const averagePercentage = ranked.length ? ranked.reduce((sum, row) => sum + row.percentage, 0) / ranked.length : 0;
+
+  const syncRows = buildPerformanceSyncRowsFromData(snapshot, performanceMonth, eligibleEmployees);
+  const performanceIncentiveRows = buildPerformanceIncentiveRowsFromData({ evaluations: selectedEvaluations, incentives }, eligibleEmployees);
+  const syncByEmployee = new Map(syncRows.map((row) => [row.employee.id, row]));
+  const gpaSyncByEmployee = new Map(performanceIncentiveRows.map((row) => [row.employee.id, row]));
+  const monthlyEmployeeIds = new Set((snapshot.monthlyEntries || []).filter((row) => eligibleIds.has(row.employeeId)).map((row) => row.employeeId));
+  const validationEmployees = state.employees.map((employee) => ({ ...employee, isActive: eligibleIds.has(employee.id) }));
+  const validation = validateMonthlyDataRecords(snapshot.monthlyEntries || [], snapshot.monthlyOverrides || [], validationEmployees, state.executiveMonth);
+  const monthClosed = String(snapshot.monthStatus?.status || "OPEN") === "CLOSED";
+  const closureStatus = String(data.closure?.status || "OPEN");
+
+  const attendanceMissing = eligibleEmployees.filter((employee) => !attendanceByEmployee.has(employee.id)).length;
+  const monthlyMissing = eligibleEmployees.filter((employee) => !monthlyEmployeeIds.has(employee.id)).length;
+  const syncPending = syncRows.filter((row) => row.status !== "SYNCED").length;
+  const disciplinePending = syncRows.filter((row) => row.disciplinePending === true).length;
+  const gpaIncentivePending = performanceIncentiveRows.filter((row) => !["SYNCED", "NOT_APPLICABLE"].includes(row.status)).length;
+  const incentiveMissing = eligibleEmployees.filter((employee) => !incentiveByEmployee.has(employee.id)).length;
+  const negativeIncentives = incentives.filter((row) => Number(row.totalAmount || 0) < 0).length;
+  const lowPerformance = ranked.filter((row) => row.gpa < 2.5).length;
+
+  const alerts = [];
+  const pushAlert = (severity, title, detail, action, count = 0) => alerts.push({ severity, title, detail, action, count });
+  if (closureStatus === "REOPENED") pushAlert("danger", "รอบเดือนถูกเปิดกลับมาแก้ไข", data.closure?.reason || "ควรตรวจและรับรองรอบใหม่", "closing");
+  else if (closureStatus !== "FINALIZED") pushAlert("warning", "รอบเดือนยังไม่รับรอง", "ตรวจข้อมูลทุกโมดูลและล็อกรอบเมื่อครบ", "closing");
+  if (!monthClosed) pushAlert("danger", "Monthly Performance ยังไม่ปิดเดือน", `สถานะปัจจุบัน ${snapshot.monthStatus?.status || "OPEN"}`, "monthly");
+  if (validation.counts.error) pushAlert("danger", "Monthly Performance มีข้อผิดพลาด", `พบ Error ${validation.counts.error} รายการ`, "monthly", validation.counts.error);
+  if (attendanceMissing) pushAlert("warning", "ข้อมูลเวลายังไม่ครบ", `ขาด ${attendanceMissing} คน`, "workday", attendanceMissing);
+  if (monthlyMissing) pushAlert("warning", "Monthly Performance ยังไม่มีข้อมูล", `ขาด ${monthlyMissing} คน`, "monthly", monthlyMissing);
+  if (syncPending) pushAlert("warning", "คะแนนยังเชื่อมไม่ครบ", `ค้าง ${syncPending} คน`, "sync", syncPending);
+  if (disciplinePending) pushAlert("warning", "คะแนนกฎระเบียบยังไม่ครบ", `รอกรอก ${disciplinePending} คน`, "discipline", disciplinePending);
+  if (gpaIncentivePending) pushAlert("warning", "เงินประเมินจาก GPA ยังไม่ครบ", `ค้าง ${gpaIncentivePending} คน`, "gpaIncentive", gpaIncentivePending);
+  if (incentiveMissing) pushAlert("warning", "Service Incentive ยังไม่ครบ", `ไม่มีรายการ ${incentiveMissing} คน`, "service", incentiveMissing);
+  if (negativeIncentives) pushAlert("info", "พบยอด Incentive ติดลบ", `${negativeIncentives} คน`, "service", negativeIncentives);
+  if (lowPerformance) pushAlert("info", "GPA ต่ำกว่า 2.50", `${lowPerformance} คน ควรติดตาม`, "performance", lowPerformance);
+
+  const riskRows = eligibleEmployees.map((employee) => {
+    const attendanceRow = attendanceByEmployee.get(employee.id) || null;
+    const incentive = incentiveByEmployee.get(employee.id) || null;
+    const performance = ranked.find((row) => row.employee.id === employee.id) || null;
+    const syncRow = syncByEmployee.get(employee.id) || null;
+    const gpaSync = gpaSyncByEmployee.get(employee.id) || null;
+    const leaveDays = leaveDaysByEmployee.get(employee.id) || 0;
+    const issues = [];
+    let severity = 0;
+    if (!performance) { issues.push("คะแนนยังไม่ครบ"); severity += 2; }
+    else if (performance.gpa < 2.5) { issues.push(`GPA ${formatNumber(performance.gpa, 2)}`); severity += 3; }
+    const lateMinutes = Number(attendanceRow?.lateMinutes || 0);
+    if (!attendanceRow) { issues.push("ไม่มีข้อมูลเวลา"); severity += 2; }
+    else if (lateMinutes >= 120) { issues.push(`สาย ${lateMinutes} นาที`); severity += 3; }
+    else if (lateMinutes >= 60) { issues.push(`สาย ${lateMinutes} นาที`); severity += 2; }
+    else if (lateMinutes > 0) { issues.push(`สาย ${lateMinutes} นาที`); severity += 1; }
+    if (Number(incentive?.totalAmount || 0) < 0) { issues.push(`Incentive ${formatMoney(incentive.totalAmount)}`); severity += 2; }
+    if (leaveDays >= 3) { issues.push(`ลา ${formatNumber(leaveDays, 1)} วัน`); severity += 1; }
+    if (syncRow && syncRow.status !== "SYNCED") { issues.push("คะแนนยังไม่ Sync"); severity += 1; }
+    if (gpaSync && !["SYNCED", "NOT_APPLICABLE"].includes(gpaSync.status)) { issues.push("เงินประเมินยังไม่ Sync"); severity += 1; }
+    return { employee, performance, attendance: attendanceRow, incentive, leaveDays, issues, severity };
+  }).filter((row) => row.severity > 0).sort((a, b) => b.severity - a.severity || (Number(a.employee.sortOrder) || 999999) - (Number(b.employee.sortOrder) || 999999));
+
+  const trendStart = Math.max(0, performanceMonth - 5);
+  const trend = [];
+  for (let monthIndex = trendStart; monthIndex <= performanceMonth; monthIndex += 1) {
+    const yearMonth = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+    const monthEvaluations = (data.evaluationsYear || []).filter((row) => row.month === monthIndex && row.disciplinePending !== true && eligibleIds.has(row.employeeId));
+    const monthResults = monthEvaluations.map((row) => calculatePerformanceSummary(row.scores)).filter(Boolean);
+    const gpa = monthResults.length ? monthResults.reduce((sum, row) => sum + row.gpa, 0) / monthResults.length : 0;
+    const monthIncentives = state.incentives.filter((row) => row.yearMonth === yearMonth && eligibleIds.has(row.employeeId));
+    const amount = monthIncentives.reduce((sum, row) => sum + Number(row.totalAmount || 0), 0);
+    trend.push({ monthIndex, label: PERFORMANCE_SHORT_MONTHS[monthIndex], yearMonth, gpa, amount });
+  }
+
+  return {
+    eligibleEmployees, totals, incentives, closureStatus, closure: data.closure || {}, monthClosed, validation,
+    ranked, averageGpa, averagePercentage, totalLateMinutes, lateEmployeeCount, totalLeaveDays, leaveMonth,
+    alerts, riskRows, trend,
+    counts: { attendanceMissing, monthlyMissing, syncPending, disciplinePending, gpaIncentivePending, incentiveMissing, negativeIncentives, lowPerformance },
+  };
+}
+
+function executiveAlertClass(severity) {
+  return severity === "danger" ? "executive-alert-danger" : severity === "warning" ? "executive-alert-warning" : "executive-alert-info";
+}
+
+function executiveClosureBadge(status) {
+  if (status === "FINALIZED") return '<span class="badge badge-ready"><i data-lucide="lock-keyhole"></i>รับรองแล้ว</span>';
+  if (status === "REOPENED") return '<span class="badge badge-danger"><i data-lucide="lock-keyhole-open"></i>เปิดแก้ไข</span>';
+  return '<span class="badge badge-progress"><i data-lucide="clock-3"></i>ยังไม่รับรอง</span>';
+}
+
+function renderExecutiveTrend(summary) {
+  const maxAmount = Math.max(1, ...summary.trend.map((row) => Math.abs(row.amount)));
+  const maxGpa = 4;
+  return `<div class="executive-trend-grid">
+    <div class="executive-chart-block"><h3>แนวโน้ม GPA</h3><div class="executive-bars">${summary.trend.map((row) => `<div class="executive-bar-column"><div class="executive-bar-value">${row.gpa ? formatNumber(row.gpa, 2) : "-"}</div><div class="executive-bar-track"><div class="executive-bar executive-bar-gpa" style="height:${row.gpa ? Math.max(6, row.gpa / maxGpa * 100) : 0}%"></div></div><small>${row.label}</small></div>`).join("")}</div></div>
+    <div class="executive-chart-block"><h3>แนวโน้ม Service Incentive</h3><div class="executive-bars">${summary.trend.map((row) => `<div class="executive-bar-column"><div class="executive-bar-value">${formatMoney(row.amount)}</div><div class="executive-bar-track"><div class="executive-bar ${row.amount < 0 ? "executive-bar-negative" : "executive-bar-money"}" style="height:${Math.abs(row.amount) ? Math.max(6, Math.abs(row.amount) / maxAmount * 100) : 0}%"></div></div><small>${row.label}</small></div>`).join("")}</div></div>
+  </div>`;
+}
+
+function renderExecutive() {
+  const summary = buildExecutiveSummary();
+  const firstLoading = state.executiveLoading && !summary;
+  if (firstLoading) {
+    els.executiveView.innerHTML = '<div class="loading-skeleton"></div>';
+    return;
+  }
+  els.executiveView.innerHTML = `
+    <div class="page-grid">
+      <article class="panel executive-hero">
+        <div class="panel-head"><div><p class="eyebrow">EXECUTIVE CONTROL CENTER</p><h2>Executive Dashboard</h2><p>ภาพรวมผลการทำงาน เวลา เงินพิเศษ และรายการติดตามประจำเดือน</p></div>${summary ? executiveClosureBadge(summary.closureStatus) : ""}</div>
+        <div class="closing-toolbar"><div class="field compact-field"><label for="executiveMonthPicker">เดือนรายงาน</label><input id="executiveMonthPicker" type="month" value="${escapeHtml(state.executiveMonth)}" /></div><div class="panel-actions"><button id="refreshExecutiveButton" class="button button-secondary" type="button"><i data-lucide="refresh-cw"></i>ตรวจใหม่</button><button id="exportExecutiveButton" class="button button-primary" type="button" ${summary ? "" : "disabled"}><i data-lucide="file-down"></i>Export Summary</button></div></div>
+      </article>
+      ${summary ? `
+      <div class="kpi-grid">
+        <article class="kpi-card"><div class="kpi-head"><span>พนักงานในรอบ</span><span class="kpi-icon"><i data-lucide="users-round"></i></span></div><div class="kpi-value">${summary.eligibleEmployees.length}</div><div class="kpi-note">อ้างอิงวันที่เริ่มงาน</div></article>
+        <article class="kpi-card"><div class="kpi-head"><span>GPA เฉลี่ย</span><span class="kpi-icon"><i data-lucide="gauge"></i></span></div><div class="kpi-value">${summary.ranked.length ? formatNumber(summary.averageGpa, 2) : "-"}</div><div class="kpi-note">ประเมินครบ ${summary.ranked.length}/${summary.eligibleEmployees.length} คน · ${summary.ranked.length ? formatNumber(summary.averagePercentage, 1) : "-"}%</div></article>
+        <article class="kpi-card"><div class="kpi-head"><span>Service Incentive</span><span class="kpi-icon"><i data-lucide="badge-dollar-sign"></i></span></div><div class="kpi-value ${summary.totals.totalAmount < 0 ? "negative" : ""}">${formatMoney(summary.totals.totalAmount)}</div><div class="kpi-note">${summary.incentives.length}/${summary.eligibleEmployees.length} รายการ</div></article>
+        <article class="kpi-card"><div class="kpi-head"><span>การมาสาย / วันลา</span><span class="kpi-icon"><i data-lucide="calendar-clock"></i></span></div><div class="kpi-value">${summary.totalLateMinutes}</div><div class="kpi-note">นาทีสาย ${summary.lateEmployeeCount} คน · ลา ${formatNumber(summary.totalLeaveDays, 1)} วัน</div></article>
+      </div>
+      <div class="split-grid executive-main-grid">
+        <article class="panel"><div class="panel-head"><div><h2>รายการต้องติดตาม</h2><p>เรียงจากประเด็นที่กระทบการปิดรอบก่อน</p></div><span class="badge ${summary.alerts.length ? "badge-progress" : "badge-ready"}">${summary.alerts.length ? `${summary.alerts.length} รายการ` : "ไม่มีรายการค้าง"}</span></div>
+          ${summary.alerts.length ? `<div class="executive-alert-list">${summary.alerts.map((alert) => `<button class="executive-alert ${executiveAlertClass(alert.severity)}" data-executive-action="${escapeHtml(alert.action)}" type="button"><span class="executive-alert-icon"><i data-lucide="${alert.severity === "danger" ? "octagon-alert" : alert.severity === "warning" ? "triangle-alert" : "info"}"></i></span><span><strong>${escapeHtml(alert.title)}</strong><small>${escapeHtml(alert.detail)}</small></span><i data-lucide="arrow-right"></i></button>`).join("")}</div>` : `<div class="empty-state executive-empty-success"><i data-lucide="circle-check-big"></i><p>ข้อมูลเดือนนี้เรียบร้อย ไม่มีรายการต้องติดตาม</p></div>`}
+        </article>
+        <article class="panel"><div class="panel-head"><div><h2>อันดับ Performance</h2><p>เฉพาะพนักงานที่กรอกครบทั้ง 6 หัวข้อ</p></div><button class="button button-ghost button-small" data-executive-action="performance" type="button">ดู Performance</button></div>
+          ${summary.ranked.length ? `<div class="ranking-list">${summary.ranked.slice(0, 6).map((row) => `<button class="ranking-row executive-open-employee" data-employee-id="${escapeHtml(row.employee.id)}" type="button"><span class="rank-number">${row.rank}</span><span class="ranking-name"><strong>${escapeHtml(row.employee.fullName)}</strong><small>${escapeHtml(row.employee.employeeCode)}</small></span><span class="ranking-score"><strong>GPA ${formatNumber(row.gpa, 2)}</strong><small>${formatNumber(row.percentage, 1)} คะแนน</small></span></button>`).join("")}</div>` : `<div class="empty-state"><i data-lucide="clipboard-x"></i><p>ยังไม่มีผลประเมินที่ครบถ้วน</p></div>`}
+        </article>
+      </div>
+      <article class="panel"><div class="panel-head"><div><h2>แนวโน้มในปี ${executiveMonthParts().performanceYear}</h2><p>ย้อนหลังสูงสุด 6 เดือนถึงเดือนที่เลือก</p></div></div>${renderExecutiveTrend(summary)}</article>
+      <div class="split-grid">
+        <article class="panel"><div class="panel-head"><div><h2>องค์ประกอบ Service Incentive</h2><p>ยอดรวมของเดือน ${escapeHtml(state.executiveMonth)}</p></div></div><div class="progress-list">${[["ขายของ", summary.totals.salesAmount],["ประเมิน", summary.totals.evaluationAmount],["เวลา", summary.totals.timeAmount]].map(([label, amount]) => `<div class="progress-row"><span>${label}</span><div class="progress-track"><div class="progress-bar" style="width:${Math.min(100, Math.abs(amount) / Math.max(1, Math.abs(summary.totals.salesAmount), Math.abs(summary.totals.evaluationAmount), Math.abs(summary.totals.timeAmount)) * 100)}%"></div></div><strong class="${amount < 0 ? "negative" : ""}">${formatMoney(amount)}</strong></div>`).join("")}</div></article>
+        <article class="panel"><div class="panel-head"><div><h2>พนักงานที่ควรติดตาม</h2><p>รวมสัญญาณจากคะแนน เวลา วันลา และ Incentive</p></div></div>
+          ${summary.riskRows.length ? `<div class="executive-risk-list">${summary.riskRows.slice(0, 8).map((row) => `<button class="executive-risk-row executive-open-employee" data-employee-id="${escapeHtml(row.employee.id)}" type="button"><span class="executive-risk-score">${row.severity}</span><span><strong>${escapeHtml(row.employee.fullName)}</strong><small>${escapeHtml(row.issues.join(" · "))}</small></span><i data-lucide="chevron-right"></i></button>`).join("")}</div>` : `<div class="empty-state executive-empty-success"><i data-lucide="shield-check"></i><p>ไม่พบสัญญาณที่ต้องติดตาม</p></div>`}
+        </article>
+      </div>
+      ` : `<article class="panel"><div class="empty-state"><i data-lucide="database-zap"></i><p>กำลังโหลดข้อมูล Executive Dashboard</p></div></article>`}
+    </div>`;
+
+  document.getElementById("executiveMonthPicker")?.addEventListener("change", (event) => {
+    state.executiveMonth = event.target.value || currentYearMonth();
+    state.executiveData = null;
+    state.executiveDataKey = "";
+    void refreshExecutiveData({ force: true });
+  });
+  document.getElementById("refreshExecutiveButton")?.addEventListener("click", () => refreshExecutiveData({ force: true }));
+  document.getElementById("exportExecutiveButton")?.addEventListener("click", exportExecutiveSummaryCsv);
+  els.executiveView.querySelectorAll("[data-executive-action]").forEach((button) => button.addEventListener("click", () => openExecutiveAction(button.dataset.executiveAction)));
+  els.executiveView.querySelectorAll(".executive-open-employee").forEach((button) => button.addEventListener("click", () => {
+    const { performanceYear, performanceMonth } = executiveMonthParts();
+    state.performanceYear = performanceYear;
+    state.performanceMonth = performanceMonth;
+    state.performanceEmployeeId = button.dataset.employeeId;
+    state.performanceTab = "entry";
+    state.performanceManualOverride = false;
+    showView("performance");
+  }));
+  ensureIcons();
+}
+
+function openExecutiveAction(action) {
+  const { year, performanceYear, performanceMonth } = executiveMonthParts();
+  if (action === "closing") { state.closingMonth = state.executiveMonth; state.closingDataKey = ""; return showView("closing"); }
+  if (action === "workday") { state.workdayMonth = state.executiveMonth; state.workdayYear = year; state.workdayTab = "attendance"; state.workdayDataKey = ""; return showView("workday"); }
+  if (action === "monthly") { state.monthlyMonth = state.executiveMonth; state.monthlyDate = `${state.executiveMonth}-01`; state.monthlyTab = "control"; state.monthlyDataKey = ""; return showView("monthly"); }
+  if (["sync", "discipline", "gpaIncentive", "performance"].includes(action)) {
+    state.performanceYear = performanceYear;
+    state.performanceMonth = performanceMonth;
+    state.performanceTab = action === "sync" ? "sync" : action === "gpaIncentive" ? "incentive" : action === "discipline" ? "entry" : "dashboard";
+    state.performanceSyncKey = "";
+    state.performanceIncentiveKey = "";
+    return showView("performance");
+  }
+  if (action === "service") { state.serviceMonth = state.executiveMonth; state.serviceEmployeeId = ""; return showView("service"); }
+}
+
+function exportExecutiveSummaryCsv() {
+  const summary = buildExecutiveSummary();
+  if (!summary) return showToast("ยังไม่มีข้อมูลสำหรับ Export", "warning");
+  const rows = [["เดือน", "รหัสพนักงาน", "ชื่อพนักงาน", "GPA", "คะแนนรวม", "นาทีสาย", "วันลา", "Service Incentive", "ประเด็นติดตาม", "สถานะรอบ"]];
+  summary.eligibleEmployees.forEach((employee) => {
+    const performance = summary.ranked.find((row) => row.employee.id === employee.id);
+    const risk = summary.riskRows.find((row) => row.employee.id === employee.id);
+    const attendance = state.executiveData.syncSnapshot.attendance.find((row) => row.employeeId === employee.id);
+    const leaveDays = (state.executiveData.leaveRecords || []).filter((row) => row.employeeId === employee.id && row.yearMonth === state.executiveMonth).reduce((sum, row) => sum + Number(row.days || 0), 0);
+    const incentive = summary.incentives.find((row) => row.employeeId === employee.id);
+    rows.push([state.executiveMonth, employee.employeeCode, employee.fullName, performance ? roundedPerformanceGpa(performance.gpa) : "", performance ? Math.round(performance.percentage * 100) / 100 : "", attendance?.lateMinutes ?? "", leaveDays, incentive?.totalAmount ?? "", risk?.issues?.join(" | ") || "", summary.closureStatus]);
+  });
+  downloadCsv(rows, `executive-summary-${state.executiveMonth}.csv`);
 }
 
 function renderEmployees() {
@@ -3327,7 +3601,8 @@ function bindGlobalEvents() {
     } catch (error) { showToast(error.message, "error"); }
   });
   els.refreshButton.addEventListener("click", () => {
-    if (state.currentView === "performance") {
+    if (state.currentView === "executive") refreshExecutiveData({ force: true });
+    else if (state.currentView === "performance") {
       refreshPerformanceData({ force: true });
       if (state.performanceTab === "employee360") refreshEmployee360Data({ quiet: true });
     }

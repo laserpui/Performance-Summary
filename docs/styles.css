@@ -584,3 +584,50 @@ tr:last-child td { border-bottom: 0; }
 @media (max-width:640px) {
   .closing-certification-actions .button { width:100%; }
 }
+
+
+/* Phase 7 · Executive Dashboard */
+.executive-hero {
+  overflow: hidden;
+  background:
+    radial-gradient(circle at 88% 10%, rgba(89, 136, 221, .20), transparent 34%),
+    radial-gradient(circle at 8% 92%, rgba(28, 178, 153, .14), transparent 32%),
+    var(--surface);
+}
+.executive-main-grid { grid-template-columns:minmax(320px,1fr) minmax(320px,1fr); }
+.executive-alert-list, .executive-risk-list { display:grid; gap:9px; }
+.executive-alert {
+  width:100%; display:grid; grid-template-columns:42px 1fr 20px; gap:11px; align-items:center;
+  padding:12px; border:1px solid var(--border); border-radius:15px; text-align:left; background:rgba(255,255,255,.68); cursor:pointer;
+}
+.executive-alert:hover, .executive-risk-row:hover { transform:translateY(-1px); border-color:rgba(31,113,143,.35); }
+.executive-alert strong, .executive-alert small, .executive-risk-row strong, .executive-risk-row small { display:block; }
+.executive-alert small, .executive-risk-row small { margin-top:3px; color:var(--muted); line-height:1.45; }
+.executive-alert-icon { width:40px; height:40px; display:grid; place-items:center; border-radius:13px; }
+.executive-alert-danger { border-color:rgba(184,68,75,.22); background:rgba(255,240,241,.76); }
+.executive-alert-danger .executive-alert-icon { color:var(--danger); background:rgba(184,68,75,.10); }
+.executive-alert-warning { border-color:rgba(180,107,19,.22); background:rgba(255,249,231,.78); }
+.executive-alert-warning .executive-alert-icon { color:var(--warning); background:rgba(180,107,19,.10); }
+.executive-alert-info .executive-alert-icon { color:var(--primary); background:var(--primary-soft); }
+.executive-empty-success svg { color:var(--success); }
+.executive-trend-grid { display:grid; grid-template-columns:1fr 1fr; gap:18px; }
+.executive-chart-block { padding:15px; border:1px solid var(--border); border-radius:17px; background:rgba(255,255,255,.62); }
+.executive-chart-block h3 { margin:0 0 14px; }
+.executive-bars { height:210px; display:grid; grid-template-columns:repeat(6,minmax(42px,1fr)); gap:10px; align-items:end; overflow-x:auto; }
+.executive-bar-column { min-width:42px; height:100%; display:grid; grid-template-rows:28px 1fr 24px; gap:4px; text-align:center; }
+.executive-bar-value { font-size:.72rem; font-weight:800; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.executive-bar-track { height:100%; min-height:100px; display:flex; align-items:flex-end; justify-content:center; border-radius:11px; background:rgba(31,113,143,.06); overflow:hidden; }
+.executive-bar { width:min(70%,48px); min-height:0; border-radius:9px 9px 3px 3px; transition:height .25s ease; }
+.executive-bar-gpa { background:linear-gradient(180deg,#6b8bd9,#365ea9); }
+.executive-bar-money { background:linear-gradient(180deg,#39b98d,#1b7f5f); }
+.executive-bar-negative { background:linear-gradient(180deg,#df7379,#b8444b); }
+.executive-bar-column small { color:var(--muted); font-weight:700; }
+.executive-risk-row { width:100%; display:grid; grid-template-columns:38px 1fr 18px; gap:10px; align-items:center; padding:10px 11px; border:1px solid var(--border); border-radius:14px; background:rgba(255,255,255,.66); text-align:left; cursor:pointer; }
+.executive-risk-score { width:34px; height:34px; display:grid; place-items:center; border-radius:11px; color:#8c333a; background:#fbe0e2; font-weight:800; }
+@media (max-width:1000px) {
+  .executive-main-grid, .executive-trend-grid { grid-template-columns:1fr; }
+}
+@media (max-width:640px) {
+  .executive-bars { grid-template-columns:repeat(6,minmax(54px,1fr)); }
+  .executive-alert { grid-template-columns:38px 1fr 18px; }
+}

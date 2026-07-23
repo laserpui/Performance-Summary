@@ -9,11 +9,11 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="./styles.css?v=6.2.0" />
+  <link rel="stylesheet" href="./styles.css?v=7.0.0" />
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
   <script src="./firebase-config.js?v=2.0.0" defer></script>
   <script src="./firebase-service.js?v=6.2.0" defer></script>
-  <script src="./app.js?v=6.2.0" defer></script>
+  <script src="./app.js?v=7.0.0" defer></script>
 </head>
 <body>
   <div class="ambient ambient-one"></div>
@@ -56,6 +56,7 @@
 
       <nav class="primary-nav">
         <button class="nav-item active" data-view="dashboard" type="button"><i data-lucide="layout-dashboard"></i><span>ภาพรวม</span></button>
+        <button class="nav-item" data-view="executive" type="button"><i data-lucide="chart-spline"></i><span>Executive Dashboard</span></button>
         <button class="nav-item" data-view="employees" type="button"><i data-lucide="users-round"></i><span>พนักงาน</span></button>
         <button class="nav-item" data-view="service" type="button"><i data-lucide="badge-dollar-sign"></i><span>Service Incentive</span></button>
         <button class="nav-item" data-view="performance" type="button"><i data-lucide="chart-no-axes-combined"></i><span>Performance Summary</span></button>
@@ -75,7 +76,7 @@
           <span><strong id="accountName">ผู้ใช้งาน</strong><small id="accountRole">กำลังตรวจสอบสิทธิ์</small></span>
           <button id="logoutButton" class="icon-button" type="button" aria-label="ออกจากระบบ"><i data-lucide="log-out"></i></button>
         </div>
-        <p>Phase 6.2 · Month-End Certification</p>
+        <p>Phase 7 · Executive Dashboard</p>
       </div>
     </aside>
 
@@ -92,6 +93,7 @@
       </header>
 
       <section id="dashboardView" class="view active" aria-labelledby="pageTitle"></section>
+      <section id="executiveView" class="view" aria-labelledby="pageTitle"></section>
       <section id="employeesView" class="view" aria-labelledby="pageTitle"></section>
       <section id="serviceView" class="view" aria-labelledby="pageTitle"></section>
       <section id="performanceView" class="view" aria-labelledby="pageTitle"></section>
@@ -104,6 +106,7 @@
 
   <nav id="mobileNav" class="mobile-nav glass-card" aria-label="เมนูสำหรับมือถือ" hidden>
     <button class="mobile-nav-item active" data-view="dashboard" type="button"><i data-lucide="layout-dashboard"></i><span>ภาพรวม</span></button>
+    <button class="mobile-nav-item" data-view="executive" type="button"><i data-lucide="chart-spline"></i><span>ผู้บริหาร</span></button>
     <button class="mobile-nav-item" data-view="employees" type="button"><i data-lucide="users-round"></i><span>พนักงาน</span></button>
     <button class="mobile-nav-item" data-view="service" type="button"><i data-lucide="badge-dollar-sign"></i><span>เงินพิเศษ</span></button>
     <button class="mobile-nav-item" data-view="performance" type="button"><i data-lucide="chart-no-axes-combined"></i><span>KPI</span></button>
