@@ -218,6 +218,11 @@
       scores: Array.isArray(row.scores) ? row.scores.map(Number) : [],
       note: String(row.note || ""),
       source: String(row.source || "Performance Summary / Firebase"),
+      sourceSync: row.sourceSync && typeof row.sourceSync === "object" ? row.sourceSync : {},
+      scoreSources: row.scoreSources && typeof row.scoreSources === "object" ? row.scoreSources : {},
+      syncStatus: String(row.syncStatus || "manual"),
+      disciplinePending: row.disciplinePending === true,
+      manualOverrides: row.manualOverrides && typeof row.manualOverrides === "object" ? row.manualOverrides : {},
       version: Number(row.version) || 1,
       updatedAt: toIso(row.updatedAt),
     };
@@ -232,6 +237,38 @@
       }
       return score;
     });
+  }
+
+
+  function normalizePerformanceMetadata(input = {}, existing = null) {
+    const sourceSync = input.sourceSync && typeof input.sourceSync === "object"
+      ? input.sourceSync
+      : (existing?.sourceSync && typeof existing.sourceSync === "object" ? existing.sourceSync : {});
+    const defaultSources = {
+      capability: "manual",
+      quality: "manual",
+      responsibility: "manual",
+      effort: "manual",
+      punctuality: "manual",
+      discipline: "manual",
+    };
+    const scoreSources = {
+      ...defaultSources,
+      ...(existing?.scoreSources && typeof existing.scoreSources === "object" ? existing.scoreSources : {}),
+      ...(input.scoreSources && typeof input.scoreSources === "object" ? input.scoreSources : {}),
+    };
+    const manualOverrides = input.manualOverrides && typeof input.manualOverrides === "object"
+      ? input.manualOverrides
+      : (existing?.manualOverrides && typeof existing.manualOverrides === "object" ? existing.manualOverrides : {});
+    const allowedSyncStatus = new Set(["manual", "synced", "source_changed", "manual_override"]);
+    const syncStatusValue = String(input.syncStatus || existing?.syncStatus || "manual");
+    return {
+      sourceSync,
+      scoreSources,
+      syncStatus: allowedSyncStatus.has(syncStatusValue) ? syncStatusValue : "manual",
+      disciplinePending: input.disciplinePending === undefined ? existing?.disciplinePending === true : input.disciplinePending === true,
+      manualOverrides,
+    };
   }
 
   function calculateLateScore(value) {
@@ -1053,13 +1090,19 @@
           throw conflict;
         }
         before = existing ? { ...existing, createdAt: null, updatedAt: null } : null;
+        const metadata = normalizePerformanceMetadata(input, existing);
         transaction.set(ref, {
           employeeId,
           year,
           month,
           scores,
           note,
-          source: "Employee Management Hub · Performance Summary",
+          source: String(input.source || "Employee Management Hub · Performance Summary").slice(0, 160),
+          sourceSync: metadata.sourceSync,
+          scoreSources: metadata.scoreSources,
+          syncStatus: metadata.syncStatus,
+          disciplinePending: metadata.disciplinePending,
+          manualOverrides: metadata.manualOverrides,
           version: currentVersion + 1,
           createdAt: existing?.createdAt || firestoreApi.serverTimestamp(),
           createdBy: existing?.createdBy || uid,
@@ -1074,6 +1117,124 @@
     } catch (error) {
       if (error?.code === "VERSION_CONFLICT") throw error;
       throw friendlyError(error, "บันทึก Performance Summary ไม่สำเร็จ");
+    }
+  }
+
+
+  async function loadPerformanceScoreSyncSnapshot(yearMonth) {
+    assertReady();
+    const parsed = parseYearMonth(yearMonth);
+    const thaiYear = parsed.year + 543;
+    try {
+      const [monthlyEntries, monthlyOverrides, monthStatus, attendance, evaluations] = await Promise.all([
+        loadDailyPerformanceEntries(parsed.yearMonth),
+        loadMonthlyPerformanceOverrides(parsed.yearMonth),
+        loadMonthlyPerformanceMonthStatus(parsed.yearMonth),
+        loadAttendanceMonthly(parsed.yearMonth),
+        loadPerformanceEvaluations(thaiYear),
+      ]);
+      return {
+        yearMonth: parsed.yearMonth,
+        year: parsed.year,
+        month: parsed.month,
+        thaiYear,
+        monthlyEntries,
+        monthlyOverrides,
+        monthStatus,
+        attendance,
+        evaluations: evaluations.filter((row) => row.month === parsed.month - 1),
+      };
+    } catch (error) {
+      throw friendlyError(error, "โหลดข้อมูลเชื่อมคะแนนไม่สำเร็จ");
+    }
+  }
+
+  async function syncPerformanceEvaluationFromSources(input) {
+    assertReady();
+    const uid = currentUid();
+    const employeeId = String(input.employeeId || "").trim();
+    const parsed = parseYearMonth(input.yearMonth);
+    const year = parsed.year + 543;
+    const month = parsed.month - 1;
+    const sourceScores = Array.isArray(input.sourceScores) ? input.sourceScores.map(Number) : [];
+    if (!employeeId) throw new Error("ไม่พบพนักงานสำหรับ Sync");
+    if (sourceScores.length !== 5 || sourceScores.some((score) => !Number.isInteger(score) || score < 20 || score > 100 || score % 5 !== 0)) {
+      throw new Error("คะแนนต้นทางหัวข้อ 1–5 ต้องอยู่ระหว่าง 20–100 และเพิ่มทีละ 5");
+    }
+    const expectedVersion = Math.max(0, Math.trunc(Number(input.expectedVersion) || 0));
+    const id = performanceEvaluationId(year, employeeId, month);
+    const ref = firestoreApi.doc(db, "evaluations", id);
+    const employeeRef = firestoreApi.doc(db, "employees", employeeId);
+    let before = null;
+    try {
+      await firestoreApi.runTransaction(db, async (transaction) => {
+        const [employeeSnapshot, existingSnapshot] = await Promise.all([
+          transaction.get(employeeRef),
+          transaction.get(ref),
+        ]);
+        if (!employeeSnapshot.exists()) throw new Error("ไม่พบพนักงานที่เลือก");
+        const existing = existingSnapshot.exists() ? existingSnapshot.data() : null;
+        const currentVersion = Number(existing?.version) || 0;
+        if (currentVersion !== expectedVersion) {
+          const conflict = new Error("ข้อมูลปลายทางถูกแก้ไข กรุณาตรวจสอบและส่งใหม่");
+          conflict.code = "VERSION_CONFLICT";
+          throw conflict;
+        }
+        const disciplineScore = Array.isArray(existing?.scores) && Number.isInteger(Number(existing.scores[5]))
+          ? Number(existing.scores[5])
+          : 60;
+        const disciplinePending = existing ? existing.disciplinePending === true : true;
+        const scores = [...sourceScores, disciplineScore];
+        before = existing ? { ...existing, createdAt: null, updatedAt: null } : null;
+        transaction.set(ref, {
+          employeeId,
+          year,
+          month,
+          scores,
+          note: String(existing?.note || ""),
+          source: "Employee Management Hub · Monthly Score Sync",
+          sourceSync: {
+            monthlyPerformance: {
+              yearMonth: parsed.yearMonth,
+              sourceRevision: String(input.monthlyRevision || ""),
+              syncedAt: firestoreApi.serverTimestamp(),
+            },
+            workdayInsight: {
+              yearMonth: parsed.yearMonth,
+              sourceRevision: String(input.workdayRevision || ""),
+              syncedAt: firestoreApi.serverTimestamp(),
+            },
+          },
+          scoreSources: {
+            capability: "monthlyPerformance",
+            quality: "monthlyPerformance",
+            responsibility: "monthlyPerformance",
+            effort: "monthlyPerformance",
+            punctuality: "workdayInsight",
+            discipline: existing?.scoreSources?.discipline || "manual",
+          },
+          syncStatus: "synced",
+          disciplinePending,
+          manualOverrides: existing?.manualOverrides && typeof existing.manualOverrides === "object" ? existing.manualOverrides : {},
+          version: currentVersion + 1,
+          createdAt: existing?.createdAt || firestoreApi.serverTimestamp(),
+          createdBy: existing?.createdBy || uid,
+          updatedAt: firestoreApi.serverTimestamp(),
+          updatedBy: uid,
+        });
+      });
+      const savedSnapshot = await firestoreApi.getDoc(ref);
+      const saved = performanceEvaluationFromSnapshot(savedSnapshot);
+      await writePerformanceAuditLog({
+        action: "SYNC_MONTHLY_TO_PERFORMANCE_SUMMARY",
+        targetId: id,
+        before,
+        after: { ...saved, updatedAt: null },
+      });
+      return saved;
+    } catch (error) {
+      if (error?.code === "VERSION_CONFLICT") throw error;
+      throw friendlyError(error, "ส่งคะแนนไป Performance Summary ไม่สำเร็จ");
     }
   }
 
@@ -1907,6 +2068,8 @@
     loadPerformanceEvaluations,
     loadPerformanceSnapshot,
     savePerformanceEvaluation,
+    loadPerformanceScoreSyncSnapshot,
+    syncPerformanceEvaluationFromSources,
     addPerformanceYear,
     loadEmployee360Snapshot,
     getMigrationStatus,

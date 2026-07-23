@@ -478,3 +478,17 @@ tr:last-child td { border-bottom: 0; }
   #employee360Report, #employee360Report * { visibility:visible !important; }
   #employee360Report { position:absolute; left:0; top:0; width:100%; border:0; box-shadow:none; }
 }
+
+
+/* Phase 4.1 · Monthly Score Sync */
+.score-sync-hero .compact-kpi-grid { margin: 14px 0; }
+.score-sync-table th,
+.score-sync-table td { white-space: nowrap; }
+.score-sync-table td:first-child { white-space: normal; min-width: 190px; }
+.score-sync-table .badge { max-width: 230px; white-space: normal; text-align: left; line-height: 1.35; }
+.score-card-locked { background: rgba(232, 241, 246, 0.78); border-style: dashed; }
+.score-card-locked select { cursor: not-allowed; opacity: 0.75; }
+.performance-score-card small { display: block; margin-top: 4px; }
+@media (max-width: 900px) {
+  .score-sync-table { min-width: 980px; }
+}
