@@ -204,6 +204,36 @@
     };
   }
 
+  function performanceEvaluationId(year, employeeId, month) {
+    return `${Number(year)}__${employeeId}__${Number(month)}`;
+  }
+
+  function performanceEvaluationFromSnapshot(snapshot) {
+    const row = snapshot.data();
+    return {
+      id: snapshot.id,
+      employeeId: String(row.employeeId || ""),
+      year: Number(row.year),
+      month: Number(row.month),
+      scores: Array.isArray(row.scores) ? row.scores.map(Number) : [],
+      note: String(row.note || ""),
+      source: String(row.source || "Performance Summary / Firebase"),
+      version: Number(row.version) || 1,
+      updatedAt: toIso(row.updatedAt),
+    };
+  }
+
+  function normalizePerformanceScores(scores) {
+    if (!Array.isArray(scores) || scores.length !== 6) throw new Error("ต้องกรอกคะแนนให้ครบ 6 หัวข้อ");
+    return scores.map((value) => {
+      const score = Number(value);
+      if (!Number.isInteger(score) || score < 20 || score > 100 || score % 5 !== 0) {
+        throw new Error("คะแนนต้องอยู่ระหว่าง 20–100 และเพิ่มทีละ 5");
+      }
+      return score;
+    });
+  }
+
   function calculateLateScore(value) {
     const minutes = Math.max(0, Math.trunc(Number(value) || 0));
     if (minutes <= 29) return 100;
@@ -924,6 +954,183 @@
       return { count: snapshots.size, years: [...years].sort((a, b) => a - b), latestUpdatedAt: latest };
     } catch (error) {
       throw friendlyError(error, "อ่านสรุป Performance Summary ไม่สำเร็จ");
+    }
+  }
+
+
+  async function loadPerformanceSettings() {
+    assertReady();
+    try {
+      const snapshot = await firestoreApi.getDoc(firestoreApi.doc(db, "settings", "main"));
+      if (!snapshot.exists()) return { activeYear: 2569, years: [2569], updatedAt: "" };
+      const row = snapshot.data();
+      const years = Array.isArray(row.years) ? row.years.map(Number).filter(Number.isFinite).sort((a, b) => a - b) : [];
+      const activeYear = Number(row.activeYear) || years.at(-1) || 2569;
+      return { activeYear, years: [...new Set([...years, activeYear])].sort((a, b) => a - b), updatedAt: toIso(row.updatedAt) };
+    } catch (error) {
+      throw friendlyError(error, "อ่านการตั้งค่า Performance Summary ไม่สำเร็จ");
+    }
+  }
+
+  async function loadPerformanceEvaluations(year = 0) {
+    assertReady();
+    try {
+      const collectionRef = firestoreApi.collection(db, "evaluations");
+      const numericYear = Math.trunc(Number(year) || 0);
+      const source = numericYear
+        ? firestoreApi.query(collectionRef, firestoreApi.where("year", "==", numericYear))
+        : collectionRef;
+      const snapshots = await firestoreApi.getDocs(source);
+      return snapshots.docs.map(performanceEvaluationFromSnapshot).sort((a, b) => a.month - b.month || a.employeeId.localeCompare(b.employeeId));
+    } catch (error) {
+      throw friendlyError(error, "อ่านข้อมูล Performance Summary ไม่สำเร็จ");
+    }
+  }
+
+  async function loadPerformanceSnapshot(year = 0) {
+    assertReady();
+    try {
+      const [settings, evaluations] = await Promise.all([
+        loadPerformanceSettings(),
+        loadPerformanceEvaluations(year),
+      ]);
+      const recordYears = evaluations.map((record) => record.year).filter(Number.isFinite);
+      const years = [...new Set([...(settings.years || []), ...recordYears, Number(settings.activeYear) || 2569])].sort((a, b) => a - b);
+      const activeYear = Number(year) || Number(settings.activeYear) || years.at(-1) || 2569;
+      return { settings: { ...settings, activeYear, years }, evaluations };
+    } catch (error) {
+      throw friendlyError(error, "โหลด Performance Summary ไม่สำเร็จ");
+    }
+  }
+
+  async function writePerformanceAuditLog({ action, targetId, before, after }) {
+    try {
+      const uid = currentUid();
+      await firestoreApi.addDoc(firestoreApi.collection(db, "auditLogs"), {
+        actorId: uid,
+        action,
+        targetType: "evaluation",
+        targetId: String(targetId || ""),
+        before: before || null,
+        after: after || null,
+        createdAt: firestoreApi.serverTimestamp(),
+      });
+    } catch (error) {
+      console.warn("บันทึก Performance Audit Log ไม่สำเร็จ", error);
+    }
+  }
+
+  async function savePerformanceEvaluation(input) {
+    assertReady();
+    const uid = currentUid();
+    const employeeId = String(input.employeeId || "").trim();
+    const year = Math.trunc(Number(input.year));
+    const month = Math.trunc(Number(input.month));
+    const scores = normalizePerformanceScores(input.scores);
+    const note = String(input.note || "").trim();
+    const expectedVersion = Math.max(0, Math.trunc(Number(input.expectedVersion) || 0));
+    if (!employeeId) throw new Error("กรุณาเลือกพนักงาน");
+    if (!Number.isInteger(year) || year < 2500 || year > 3000) throw new Error("ปีประเมินไม่ถูกต้อง");
+    if (!Number.isInteger(month) || month < 0 || month > 11) throw new Error("เดือนประเมินไม่ถูกต้อง");
+    if (note.length > 2000) throw new Error("หมายเหตุต้องไม่เกิน 2,000 ตัวอักษร");
+
+    const id = performanceEvaluationId(year, employeeId, month);
+    const ref = firestoreApi.doc(db, "evaluations", id);
+    const employeeRef = firestoreApi.doc(db, "employees", employeeId);
+    let before = null;
+    try {
+      await firestoreApi.runTransaction(db, async (transaction) => {
+        const [employeeSnapshot, existingSnapshot] = await Promise.all([
+          transaction.get(employeeRef),
+          transaction.get(ref),
+        ]);
+        if (!employeeSnapshot.exists()) throw new Error("ไม่พบพนักงานที่เลือก");
+        const existing = existingSnapshot.exists() ? existingSnapshot.data() : null;
+        const currentVersion = Number(existing?.version) || 0;
+        if (currentVersion !== expectedVersion) {
+          const conflict = new Error("ข้อมูลถูกแก้ไขจากอุปกรณ์อื่น กรุณาโหลดข้อมูลใหม่");
+          conflict.code = "VERSION_CONFLICT";
+          throw conflict;
+        }
+        before = existing ? { ...existing, createdAt: null, updatedAt: null } : null;
+        transaction.set(ref, {
+          employeeId,
+          year,
+          month,
+          scores,
+          note,
+          source: "Employee Management Hub · Performance Summary",
+          version: currentVersion + 1,
+          createdAt: existing?.createdAt || firestoreApi.serverTimestamp(),
+          createdBy: existing?.createdBy || uid,
+          updatedAt: firestoreApi.serverTimestamp(),
+          updatedBy: uid,
+        });
+      });
+      const savedSnapshot = await firestoreApi.getDoc(ref);
+      const saved = performanceEvaluationFromSnapshot(savedSnapshot);
+      await writePerformanceAuditLog({ action: before ? "UPDATE_EVALUATION" : "CREATE_EVALUATION", targetId: id, before, after: { ...saved, updatedAt: null } });
+      return saved;
+    } catch (error) {
+      if (error?.code === "VERSION_CONFLICT") throw error;
+      throw friendlyError(error, "บันทึก Performance Summary ไม่สำเร็จ");
+    }
+  }
+
+  async function addPerformanceYear(value) {
+    assertReady();
+    const uid = currentUid();
+    const year = Math.trunc(Number(value));
+    if (!Number.isInteger(year) || year < 2500 || year > 3000) throw new Error("ปีประเมินไม่ถูกต้อง");
+    const ref = firestoreApi.doc(db, "settings", "main");
+    try {
+      let result = null;
+      await firestoreApi.runTransaction(db, async (transaction) => {
+        const snapshot = await transaction.get(ref);
+        const current = snapshot.exists() ? snapshot.data() : {};
+        const years = [...new Set([...(Array.isArray(current.years) ? current.years.map(Number) : []), year])].filter(Number.isFinite).sort((a, b) => a - b);
+        result = { activeYear: year, years };
+        transaction.set(ref, {
+          activeYear: year,
+          years,
+          updatedAt: firestoreApi.serverTimestamp(),
+          updatedBy: uid,
+        });
+      });
+      return result;
+    } catch (error) {
+      throw friendlyError(error, "เพิ่มปีประเมินไม่สำเร็จ");
+    }
+  }
+
+  async function loadEmployee360Snapshot(yearMonth, employeeId = "") {
+    assertReady();
+    const parsed = parseYearMonth(yearMonth);
+    const thaiYear = parsed.year + 543;
+    try {
+      const [incentives, attendance, leaveRecords, monthlyEntries, monthlyOverrides, evaluations] = await Promise.all([
+        loadServiceIncentives(parsed.yearMonth),
+        loadAttendanceMonthly(parsed.yearMonth),
+        loadLeaveRecords(parsed.year),
+        loadDailyPerformanceEntries(parsed.yearMonth),
+        loadMonthlyPerformanceOverrides(parsed.yearMonth),
+        loadPerformanceEvaluations(thaiYear),
+      ]);
+      const filterEmployee = (row) => !employeeId || row.employeeId === employeeId;
+      return {
+        yearMonth: parsed.yearMonth,
+        year: parsed.year,
+        month: parsed.month,
+        thaiYear,
+        incentives: incentives.filter(filterEmployee),
+        attendance: attendance.filter(filterEmployee),
+        leaveRecords: leaveRecords.filter((row) => filterEmployee(row) && row.month === parsed.month),
+        monthlyEntries: monthlyEntries.filter(filterEmployee),
+        monthlyOverrides: monthlyOverrides.filter(filterEmployee),
+        evaluations: evaluations.filter((row) => filterEmployee(row) && row.month === parsed.month - 1),
+      };
+    } catch (error) {
+      throw friendlyError(error, "โหลดรายงานรวมพนักงานไม่สำเร็จ");
     }
   }
 
@@ -1696,6 +1903,12 @@
     loadEmployees,
     loadServiceIncentives,
     loadEvaluationSummary,
+    loadPerformanceSettings,
+    loadPerformanceEvaluations,
+    loadPerformanceSnapshot,
+    savePerformanceEvaluation,
+    addPerformanceYear,
+    loadEmployee360Snapshot,
     getMigrationStatus,
     loadHubSnapshot,
     loadAttendanceMonthly,
