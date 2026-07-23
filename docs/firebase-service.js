@@ -311,6 +311,518 @@
     };
   }
 
+  const MONTHLY_STATUS_IDS = Object.freeze(["WORK", "WEEKEND_WORK", "SICK_LEAVE", "PERSONAL_LEAVE", "VACATION", "COMP_OFF", "HOLIDAY"]);
+  const MONTHLY_WORK_STATUS_IDS = Object.freeze(["WORK", "WEEKEND_WORK"]);
+  const MONTHLY_CRITERION_IDS = Object.freeze(["C1", "C2", "C3", "C4", "C5"]);
+
+  function monthlyEntryFromSnapshot(snapshot) {
+    const row = snapshot.data();
+    const scores = row.scores && typeof row.scores === "object" ? row.scores : {};
+    return {
+      id: snapshot.id,
+      employeeId: String(row.employeeId || ""),
+      yearMonth: String(row.yearMonth || ""),
+      year: Number(row.year),
+      month: Number(row.month),
+      date: String(row.date || ""),
+      status: String(row.status || "WORK"),
+      countsAsWork: Boolean(row.countsAsWork),
+      note: String(row.note || ""),
+      scores: Object.fromEntries(MONTHLY_CRITERION_IDS.filter((key) => scores[key] !== undefined).map((key) => [key, Number(scores[key])])),
+      legacyException: Boolean(row.legacyException),
+      source: String(row.source || "Employee Hub / Firebase"),
+      sourceRecordId: String(row.sourceRecordId || ""),
+      version: Number(row.version) || 1,
+      updatedAt: toIso(row.updatedAt),
+    };
+  }
+
+  function monthlyOverrideFromSnapshot(snapshot) {
+    const row = snapshot.data();
+    return {
+      id: snapshot.id,
+      employeeId: String(row.employeeId || ""),
+      yearMonth: String(row.yearMonth || ""),
+      year: Number(row.year),
+      month: Number(row.month),
+      actualWorkDaysOverride: Number(row.actualWorkDaysOverride),
+      source: String(row.source || "Employee Hub / Firebase"),
+      version: Number(row.version) || 1,
+      updatedAt: toIso(row.updatedAt),
+    };
+  }
+
+  function monthlyStatusFromSnapshot(snapshot, yearMonth = "") {
+    if (!snapshot.exists()) {
+      return { id: yearMonth, yearMonth, status: "OPEN", reason: "", validation: null, version: 0, updatedAt: "", closedAt: "" };
+    }
+    const row = snapshot.data();
+    return {
+      id: snapshot.id,
+      yearMonth: String(row.yearMonth || snapshot.id),
+      status: String(row.status || "OPEN"),
+      reason: String(row.reason || ""),
+      validation: row.validation || null,
+      version: Number(row.version) || 1,
+      updatedAt: toIso(row.updatedAt),
+      closedAt: toIso(row.closedAt),
+    };
+  }
+
+  function normalizeMonthlyStatus(value) {
+    const status = String(value || "").trim().toUpperCase();
+    if (!MONTHLY_STATUS_IDS.includes(status)) throw new Error("สถานะประจำวันไม่ถูกต้อง");
+    return status;
+  }
+
+  function normalizeMonthlyScores(input, status, legacyException = false) {
+    const source = input && typeof input === "object" ? input : {};
+    const scores = {};
+    MONTHLY_CRITERION_IDS.forEach((criterionId) => {
+      if (source[criterionId] === "" || source[criterionId] === null || source[criterionId] === undefined) return;
+      const score = Number(source[criterionId]);
+      const validCurrent = Number.isFinite(score)
+        && score >= -0.5
+        && score <= 3
+        && Math.abs((score + 0.5) * 4 - Math.round((score + 0.5) * 4)) < 0.0001;
+      const validLegacy = legacyException === true && score === 3.5;
+      if (!validCurrent && !validLegacy) throw new Error(`${criterionId} ต้องอยู่ระหว่าง -0.50 ถึง 3.00 และเพิ่มครั้งละ 0.25`);
+      scores[criterionId] = Math.round(score * 100) / 100;
+    });
+    if (MONTHLY_WORK_STATUS_IDS.includes(status) && Object.keys(scores).length !== MONTHLY_CRITERION_IDS.length) {
+      throw new Error("สถานะทำงานต้องกรอกคะแนนครบ 5 หัวข้อ");
+    }
+    return scores;
+  }
+
+  function normalizeWorkDaysOverride(value) {
+    const days = Number(value);
+    if (!Number.isFinite(days) || days < 0 || days > 31 || Math.trunc(days) !== days) {
+      throw new Error("วันทำงานจริงต้องเป็นจำนวนเต็ม 0–31 วัน");
+    }
+    return days;
+  }
+
+  function monthlyStatusCountsAsWork(status) {
+    return MONTHLY_WORK_STATUS_IDS.includes(status);
+  }
+
+  function monthlyEntryDocumentId(employeeId, date) {
+    return `${employeeId}__${date}`;
+  }
+
+  async function ensureMonthlyMonthEditable(transaction, yearMonth) {
+    const statusRef = firestoreApi.doc(db, "monthlyPerformanceStatus", yearMonth);
+    const statusSnapshot = await transaction.get(statusRef);
+    if (statusSnapshot.exists() && String(statusSnapshot.data().status || "OPEN") === "CLOSED") {
+      throw new Error("เดือนนี้ถูกปิดแล้ว กรุณาเปิดเดือนกลับมาแก้ไขก่อน");
+    }
+    return statusSnapshot;
+  }
+
+  async function loadDailyPerformanceEntries(yearMonth = "") {
+    assertReady();
+    try {
+      const collectionRef = firestoreApi.collection(db, "dailyPerformanceEntries");
+      const source = yearMonth
+        ? firestoreApi.query(collectionRef, firestoreApi.where("yearMonth", "==", parseYearMonth(yearMonth).yearMonth))
+        : collectionRef;
+      const snapshots = await firestoreApi.getDocs(source);
+      return snapshots.docs.map(monthlyEntryFromSnapshot).sort((a, b) => b.date.localeCompare(a.date) || a.employeeId.localeCompare(b.employeeId));
+    } catch (error) {
+      throw friendlyError(error, "อ่านข้อมูล Monthly Performance ไม่สำเร็จ");
+    }
+  }
+
+  async function loadMonthlyPerformanceOverrides(yearMonth = "") {
+    assertReady();
+    try {
+      const collectionRef = firestoreApi.collection(db, "monthlyPerformanceOverrides");
+      const source = yearMonth
+        ? firestoreApi.query(collectionRef, firestoreApi.where("yearMonth", "==", parseYearMonth(yearMonth).yearMonth))
+        : collectionRef;
+      const snapshots = await firestoreApi.getDocs(source);
+      return snapshots.docs.map(monthlyOverrideFromSnapshot).sort((a, b) => a.employeeId.localeCompare(b.employeeId));
+    } catch (error) {
+      throw friendlyError(error, "อ่านวันทำงานจริงไม่สำเร็จ");
+    }
+  }
+
+  async function loadMonthlyPerformanceMonthStatus(yearMonth) {
+    assertReady();
+    const parsed = parseYearMonth(yearMonth);
+    try {
+      return monthlyStatusFromSnapshot(await firestoreApi.getDoc(firestoreApi.doc(db, "monthlyPerformanceStatus", parsed.yearMonth)), parsed.yearMonth);
+    } catch (error) {
+      throw friendlyError(error, "อ่านสถานะเดือนไม่สำเร็จ");
+    }
+  }
+
+  async function loadMonthlyPerformanceSnapshot(yearMonth) {
+    assertReady();
+    const parsed = parseYearMonth(yearMonth);
+    try {
+      const [entries, overrides, monthStatus] = await Promise.all([
+        loadDailyPerformanceEntries(parsed.yearMonth),
+        loadMonthlyPerformanceOverrides(parsed.yearMonth),
+        loadMonthlyPerformanceMonthStatus(parsed.yearMonth),
+      ]);
+      return { entries, overrides, monthStatus };
+    } catch (error) {
+      throw friendlyError(error, "โหลด Monthly Performance ไม่สำเร็จ");
+    }
+  }
+
+  async function saveDailyPerformanceEntry(input) {
+    assertReady();
+    const uid = currentUid();
+    const employeeId = String(input.employeeId || "");
+    const date = normalizeIsoDate(input.date, "วันที่ประเมิน");
+    const { yearMonth, year, month } = parseYearMonth(date.slice(0, 7));
+    const status = normalizeMonthlyStatus(input.status);
+    const legacyException = input.legacyException === true;
+    const scores = normalizeMonthlyScores(input.scores, status, legacyException);
+    const note = String(input.note || "").trim();
+    if (note.length > 1000) throw new Error("หมายเหตุต้องไม่เกิน 1,000 ตัวอักษร");
+    if (!monthlyStatusCountsAsWork(status) && Object.keys(scores).length && !note) throw new Error("ทำคะแนนในวันลา/วันหยุดต้องระบุหมายเหตุ");
+    const id = String(input.id || monthlyEntryDocumentId(employeeId, date));
+    if (id !== monthlyEntryDocumentId(employeeId, date)) throw new Error("ไม่สามารถเปลี่ยนพนักงานหรือวันที่ของรายการเดิมได้");
+    const expectedVersion = Math.max(0, Math.trunc(Number(input.expectedVersion) || 0));
+    const ref = firestoreApi.doc(db, "dailyPerformanceEntries", id);
+    const employeeRef = firestoreApi.doc(db, "employees", employeeId);
+    const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+
+    try {
+      await firestoreApi.runTransaction(db, async (transaction) => {
+        await ensureMonthlyMonthEditable(transaction, yearMonth);
+        const [employeeSnapshot, existingSnapshot] = await Promise.all([transaction.get(employeeRef), transaction.get(ref)]);
+        if (!employeeSnapshot.exists()) throw new Error("ไม่พบพนักงานที่เลือก");
+        if (employeeSnapshot.data().isActive === false) throw new Error("พนักงานคนนี้ถูกปิดใช้งาน");
+        const existing = existingSnapshot.exists() ? existingSnapshot.data() : null;
+        const currentVersion = Number(existing?.version) || 0;
+        if (currentVersion !== expectedVersion) {
+          const conflict = new Error("VERSION_CONFLICT"); conflict.code = "VERSION_CONFLICT"; throw conflict;
+        }
+        const payload = {
+          employeeId, yearMonth, year, month, date, status,
+          countsAsWork: monthlyStatusCountsAsWork(status),
+          note, scores, legacyException,
+          source: String(existing?.source || "Employee Hub / Firebase"),
+          ...(existing?.sourceRecordId ? { sourceRecordId: existing.sourceRecordId } : {}),
+          ...(Array.isArray(existing?.sourceScoreRecordIds) ? { sourceScoreRecordIds: existing.sourceScoreRecordIds } : {}),
+          ...(existing?.sourceUpdatedAt ? { sourceUpdatedAt: existing.sourceUpdatedAt } : {}),
+          ...(existing?.importedAt ? { importedAt: existing.importedAt } : {}),
+          version: currentVersion + 1,
+          createdAt: existing?.createdAt || firestoreApi.serverTimestamp(),
+          createdBy: existing?.createdBy || uid,
+          updatedAt: firestoreApi.serverTimestamp(),
+          updatedBy: uid,
+        };
+        transaction.set(ref, payload);
+        transaction.set(auditRef, {
+          actorId: uid,
+          action: existing ? "UPDATE_DAILY_PERFORMANCE" : "CREATE_DAILY_PERFORMANCE",
+          targetType: "dailyPerformanceEntry",
+          targetId: id,
+          before: existing || null,
+          after: { ...payload, createdAt: null, updatedAt: null },
+          createdAt: firestoreApi.serverTimestamp(),
+        });
+      });
+      return monthlyEntryFromSnapshot(await firestoreApi.getDoc(ref));
+    } catch (error) {
+      if (error?.code === "VERSION_CONFLICT" || error?.message === "VERSION_CONFLICT") throw error;
+      throw friendlyError(error, "บันทึก Monthly Performance ไม่สำเร็จ");
+    }
+  }
+
+  async function saveDailyPerformanceEntriesBatch(input) {
+    assertReady();
+    const uid = currentUid();
+    const employeeIds = [...new Set((Array.isArray(input.employeeIds) ? input.employeeIds : []).map((value) => String(value || "")).filter(Boolean))];
+    if (!employeeIds.length || employeeIds.length > 200) throw new Error("จำนวนพนักงานสำหรับบันทึกไม่ถูกต้อง");
+    const date = normalizeIsoDate(input.date, "วันที่ประเมิน");
+    const { yearMonth, year, month } = parseYearMonth(date.slice(0, 7));
+    const status = normalizeMonthlyStatus(input.status);
+    const scores = normalizeMonthlyScores(input.scores, status, false);
+    const note = String(input.note || "").trim();
+    if (!monthlyStatusCountsAsWork(status) && Object.keys(scores).length && !note) throw new Error("ทำคะแนนในวันลา/วันหยุดต้องระบุหมายเหตุ");
+    if (note.length > 1000) throw new Error("หมายเหตุต้องไม่เกิน 1,000 ตัวอักษร");
+
+    try {
+      const [statusSnapshot, employeeSnapshots, existingSnapshots] = await Promise.all([
+        firestoreApi.getDoc(firestoreApi.doc(db, "monthlyPerformanceStatus", yearMonth)),
+        firestoreApi.getDocs(firestoreApi.collection(db, "employees")),
+        firestoreApi.getDocs(firestoreApi.query(firestoreApi.collection(db, "dailyPerformanceEntries"), firestoreApi.where("date", "==", date))),
+      ]);
+      if (statusSnapshot.exists() && String(statusSnapshot.data().status || "OPEN") === "CLOSED") throw new Error("เดือนนี้ถูกปิดแล้ว");
+      const employees = new Map(employeeSnapshots.docs.map((snapshot) => [snapshot.id, snapshot.data()]));
+      const existing = new Map(existingSnapshots.docs.map((snapshot) => [snapshot.id, snapshot.data()]));
+      const operations = [];
+      employeeIds.forEach((employeeId) => {
+        const employee = employees.get(employeeId);
+        if (!employee || employee.isActive === false) throw new Error(`พนักงาน ${employeeId} ไม่พร้อมใช้งาน`);
+        const id = monthlyEntryDocumentId(employeeId, date);
+        const before = existing.get(id) || null;
+        const payload = {
+          employeeId, yearMonth, year, month, date, status,
+          countsAsWork: monthlyStatusCountsAsWork(status), note, scores,
+          legacyException: Boolean(before?.legacyException),
+          source: String(before?.source || "Employee Hub / Firebase"),
+          ...(before?.sourceRecordId ? { sourceRecordId: before.sourceRecordId } : {}),
+          ...(Array.isArray(before?.sourceScoreRecordIds) ? { sourceScoreRecordIds: before.sourceScoreRecordIds } : {}),
+          ...(before?.sourceUpdatedAt ? { sourceUpdatedAt: before.sourceUpdatedAt } : {}),
+          ...(before?.importedAt ? { importedAt: before.importedAt } : {}),
+          version: (Number(before?.version) || 0) + 1,
+          createdAt: before?.createdAt || firestoreApi.serverTimestamp(),
+          createdBy: before?.createdBy || uid,
+          updatedAt: firestoreApi.serverTimestamp(),
+          updatedBy: uid,
+        };
+        operations.push({ type: "set", ref: firestoreApi.doc(db, "dailyPerformanceEntries", id), data: payload });
+      });
+      operations.push({ type: "set", ref: firestoreApi.doc(firestoreApi.collection(db, "auditLogs")), data: {
+        actorId: uid, action: "BATCH_SAVE_DAILY_PERFORMANCE", targetType: "dailyPerformanceEntry",
+        targetId: `${date}__${employeeIds.length}`, before: null,
+        after: { date, employeeIds, status, count: employeeIds.length }, createdAt: firestoreApi.serverTimestamp(),
+      }});
+      await commitOperations(operations);
+      return { count: employeeIds.length, date };
+    } catch (error) {
+      throw friendlyError(error, "บันทึกคะแนนพนักงานทุกคนไม่สำเร็จ");
+    }
+  }
+
+  async function deleteDailyPerformanceEntry(documentId) {
+    assertReady();
+    const uid = currentUid();
+    const ref = firestoreApi.doc(db, "dailyPerformanceEntries", String(documentId || ""));
+    const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+    try {
+      await firestoreApi.runTransaction(db, async (transaction) => {
+        const snapshot = await transaction.get(ref);
+        if (!snapshot.exists()) throw new Error("ไม่พบข้อมูลรายวันที่ต้องการลบ");
+        await ensureMonthlyMonthEditable(transaction, String(snapshot.data().yearMonth || ""));
+        transaction.delete(ref);
+        transaction.set(auditRef, { actorId: uid, action: "DELETE_DAILY_PERFORMANCE", targetType: "dailyPerformanceEntry", targetId: snapshot.id, before: snapshot.data(), after: null, createdAt: firestoreApi.serverTimestamp() });
+      });
+    } catch (error) {
+      throw friendlyError(error, "ลบ Monthly Performance ไม่สำเร็จ");
+    }
+  }
+
+  async function saveMonthlyPerformanceOverride(input) {
+    assertReady();
+    const uid = currentUid();
+    const employeeId = String(input.employeeId || "");
+    const { yearMonth, year, month } = parseYearMonth(input.yearMonth);
+    const actualWorkDaysOverride = normalizeWorkDaysOverride(input.actualWorkDaysOverride);
+    const id = `${employeeId}__${yearMonth}`;
+    const expectedVersion = Math.max(0, Math.trunc(Number(input.expectedVersion) || 0));
+    const ref = firestoreApi.doc(db, "monthlyPerformanceOverrides", id);
+    const employeeRef = firestoreApi.doc(db, "employees", employeeId);
+    const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+    try {
+      await firestoreApi.runTransaction(db, async (transaction) => {
+        await ensureMonthlyMonthEditable(transaction, yearMonth);
+        const [employeeSnapshot, existingSnapshot] = await Promise.all([transaction.get(employeeRef), transaction.get(ref)]);
+        if (!employeeSnapshot.exists()) throw new Error("ไม่พบพนักงานที่เลือก");
+        const existing = existingSnapshot.exists() ? existingSnapshot.data() : null;
+        const currentVersion = Number(existing?.version) || 0;
+        if (currentVersion !== expectedVersion) { const conflict = new Error("VERSION_CONFLICT"); conflict.code = "VERSION_CONFLICT"; throw conflict; }
+        const payload = {
+          employeeId, yearMonth, year, month, actualWorkDaysOverride,
+          source: String(existing?.source || "Employee Hub / Firebase"),
+          ...(existing?.sourceUpdatedAt ? { sourceUpdatedAt: existing.sourceUpdatedAt } : {}),
+          ...(existing?.sourceUpdatedBy ? { sourceUpdatedBy: existing.sourceUpdatedBy } : {}),
+          ...(existing?.importedAt ? { importedAt: existing.importedAt } : {}),
+          version: currentVersion + 1,
+          createdAt: existing?.createdAt || firestoreApi.serverTimestamp(),
+          createdBy: existing?.createdBy || uid,
+          updatedAt: firestoreApi.serverTimestamp(),
+          updatedBy: uid,
+        };
+        transaction.set(ref, payload);
+        transaction.set(auditRef, { actorId: uid, action: existing ? "UPDATE_MONTHLY_OVERRIDE" : "CREATE_MONTHLY_OVERRIDE", targetType: "monthlyPerformanceOverride", targetId: id, before: existing || null, after: { ...payload, createdAt: null, updatedAt: null }, createdAt: firestoreApi.serverTimestamp() });
+      });
+      return monthlyOverrideFromSnapshot(await firestoreApi.getDoc(ref));
+    } catch (error) {
+      if (error?.code === "VERSION_CONFLICT" || error?.message === "VERSION_CONFLICT") throw error;
+      throw friendlyError(error, "บันทึกวันทำงานจริงไม่สำเร็จ");
+    }
+  }
+
+  async function deleteMonthlyPerformanceOverride(documentId) {
+    assertReady();
+    const uid = currentUid();
+    const ref = firestoreApi.doc(db, "monthlyPerformanceOverrides", String(documentId || ""));
+    const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+    try {
+      await firestoreApi.runTransaction(db, async (transaction) => {
+        const snapshot = await transaction.get(ref);
+        if (!snapshot.exists()) throw new Error("ไม่พบ Override ที่ต้องการลบ");
+        await ensureMonthlyMonthEditable(transaction, String(snapshot.data().yearMonth || ""));
+        transaction.delete(ref);
+        transaction.set(auditRef, { actorId: uid, action: "DELETE_MONTHLY_OVERRIDE", targetType: "monthlyPerformanceOverride", targetId: snapshot.id, before: snapshot.data(), after: null, createdAt: firestoreApi.serverTimestamp() });
+      });
+    } catch (error) {
+      throw friendlyError(error, "ล้างวันทำงานจริงไม่สำเร็จ");
+    }
+  }
+
+  async function setMonthlyPerformanceMonthStatus(input) {
+    assertReady();
+    const uid = currentUid();
+    const { yearMonth, year, month } = parseYearMonth(input.yearMonth);
+    const status = String(input.status || "").toUpperCase();
+    if (!["OPEN", "REVIEW", "CLOSED"].includes(status)) throw new Error("สถานะเดือนไม่ถูกต้อง");
+    const reason = String(input.reason || "").trim().slice(0, 1000);
+    if (status === "OPEN" && !reason) throw new Error("ต้องระบุเหตุผลในการเปิดเดือนกลับมาแก้ไข");
+    const validation = input.validation && typeof input.validation === "object" ? input.validation : null;
+    if (status === "CLOSED" && (!validation || validation.passed !== true || Number(validation.counts?.error) !== 0)) {
+      throw new Error("เดือนยังมีข้อผิดพลาด ไม่สามารถปิดเดือนได้");
+    }
+    const ref = firestoreApi.doc(db, "monthlyPerformanceStatus", yearMonth);
+    const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+    try {
+      await firestoreApi.runTransaction(db, async (transaction) => {
+        const snapshot = await transaction.get(ref);
+        const existing = snapshot.exists() ? snapshot.data() : null;
+        const payload = {
+          yearMonth, year, month, status, reason,
+          validation: validation ? {
+            passed: validation.passed === true,
+            counts: {
+              error: Math.max(0, Math.trunc(Number(validation.counts?.error) || 0)),
+              warning: Math.max(0, Math.trunc(Number(validation.counts?.warning) || 0)),
+              info: Math.max(0, Math.trunc(Number(validation.counts?.info) || 0)),
+            },
+            checkedAt: String(validation.checkedAt || new Date().toISOString()),
+          } : null,
+          version: (Number(existing?.version) || 0) + 1,
+          createdAt: existing?.createdAt || firestoreApi.serverTimestamp(),
+          createdBy: existing?.createdBy || uid,
+          updatedAt: firestoreApi.serverTimestamp(),
+          updatedBy: uid,
+          ...(status === "CLOSED" ? { closedAt: firestoreApi.serverTimestamp(), closedBy: uid } : {}),
+        };
+        transaction.set(ref, payload);
+        transaction.set(auditRef, { actorId: uid, action: "MONTHLY_PERFORMANCE_STATUS", targetType: "monthlyPerformanceStatus", targetId: yearMonth, before: existing || null, after: { yearMonth, status, reason, validation: payload.validation, version: payload.version }, createdAt: firestoreApi.serverTimestamp() });
+      });
+      return monthlyStatusFromSnapshot(await firestoreApi.getDoc(ref), yearMonth);
+    } catch (error) {
+      throw friendlyError(error, "เปลี่ยนสถานะเดือนไม่สำเร็จ");
+    }
+  }
+
+  async function importMonthlyPerformancePhase3Seed(seed) {
+    assertReady();
+    const uid = currentUid();
+    if (!seed || Number(seed.schemaVersion) !== 3 || seed.migrationType !== "employee-hub-monthly-performance-phase-3") throw new Error("Monthly Performance Phase 3 Seed ไม่ถูกต้องหรือไม่รองรับ");
+    if (!Array.isArray(seed.dailyPerformanceEntries) || !Array.isArray(seed.monthlyPerformanceOverrides)) throw new Error("Monthly Performance Phase 3 Seed มีข้อมูลไม่ครบ");
+    try {
+      const [employeeSnapshots, existingEntrySnapshots, existingOverrideSnapshots, existingStatusSnapshots] = await Promise.all([
+        firestoreApi.getDocs(firestoreApi.collection(db, "employees")),
+        firestoreApi.getDocs(firestoreApi.collection(db, "dailyPerformanceEntries")),
+        firestoreApi.getDocs(firestoreApi.collection(db, "monthlyPerformanceOverrides")),
+        firestoreApi.getDocs(firestoreApi.collection(db, "monthlyPerformanceStatus")),
+      ]);
+      const employeeIds = new Set(employeeSnapshots.docs.map((snapshot) => snapshot.id));
+      const existingEntries = new Map(existingEntrySnapshots.docs.map((snapshot) => [snapshot.id, snapshot.data()]));
+      const existingOverrides = new Map(existingOverrideSnapshots.docs.map((snapshot) => [snapshot.id, snapshot.data()]));
+      const existingStatuses = new Map(existingStatusSnapshots.docs.map((snapshot) => [snapshot.id, snapshot.data()]));
+      const operations = [];
+      seed.dailyPerformanceEntries.forEach((record) => {
+        const employeeId = String(record.employeeId || "");
+        if (!employeeIds.has(employeeId)) throw new Error(`ไม่พบ Employee Master: ${employeeId}`);
+        const date = normalizeIsoDate(record.date, "วันที่ประเมิน");
+        const { yearMonth, year, month } = parseYearMonth(record.yearMonth || date.slice(0, 7));
+        if (yearMonth !== date.slice(0, 7)) throw new Error(`เดือนกับวันที่ไม่ตรงกัน: ${record.id || date}`);
+        const status = normalizeMonthlyStatus(record.status);
+        const legacyException = record.legacyException === true;
+        const scores = normalizeMonthlyScores(record.scores, status, legacyException);
+        const note = String(record.note || "").trim().slice(0, 1000);
+        if (!monthlyStatusCountsAsWork(status) && Object.keys(scores).length && !note) throw new Error(`รายการ ${record.id || date} มีคะแนนวันหยุดแต่ไม่มีหมายเหตุ`);
+        const id = String(record.id || monthlyEntryDocumentId(employeeId, date));
+        if (id !== monthlyEntryDocumentId(employeeId, date)) throw new Error(`Document ID ไม่ถูกต้อง: ${id}`);
+        const payload = {
+          employeeId, yearMonth, year, month, date, status,
+          countsAsWork: monthlyStatusCountsAsWork(status), note, scores, legacyException,
+          source: String(record.source || "Monthly Performance V.2.xlsx").slice(0, 160),
+          sourceRecordId: String(record.sourceRecordId || "").slice(0, 160),
+          sourceScoreRecordIds: Array.isArray(record.sourceScoreRecordIds) ? record.sourceScoreRecordIds.map((value) => String(value).slice(0, 160)).slice(0, 5) : [],
+          version: (Number(existingEntries.get(id)?.version) || 0) + 1,
+          createdAt: existingEntries.get(id)?.createdAt || firestoreApi.serverTimestamp(),
+          createdBy: existingEntries.get(id)?.createdBy || uid,
+          updatedAt: firestoreApi.serverTimestamp(), updatedBy: uid,
+          importedAt: firestoreApi.serverTimestamp(),
+        };
+        const sourceUpdatedAt = timestampFromIso(record.sourceUpdatedAt);
+        if (sourceUpdatedAt) payload.sourceUpdatedAt = sourceUpdatedAt;
+        operations.push({ type: "set", ref: firestoreApi.doc(db, "dailyPerformanceEntries", id), data: payload });
+      });
+
+      seed.monthlyPerformanceOverrides.forEach((record) => {
+        const employeeId = String(record.employeeId || "");
+        if (!employeeIds.has(employeeId)) throw new Error(`ไม่พบ Employee Master: ${employeeId}`);
+        const { yearMonth, year, month } = parseYearMonth(record.yearMonth);
+        const id = String(record.id || `${employeeId}__${yearMonth}`);
+        if (id !== `${employeeId}__${yearMonth}`) throw new Error(`Override ID ไม่ถูกต้อง: ${id}`);
+        const payload = {
+          employeeId, yearMonth, year, month,
+          actualWorkDaysOverride: normalizeWorkDaysOverride(record.actualWorkDaysOverride),
+          source: String(record.source || "Monthly Performance V.2.xlsx").slice(0, 160),
+          sourceUpdatedBy: String(record.sourceUpdatedBy || "").slice(0, 160),
+          version: (Number(existingOverrides.get(id)?.version) || 0) + 1,
+          createdAt: existingOverrides.get(id)?.createdAt || firestoreApi.serverTimestamp(),
+          createdBy: existingOverrides.get(id)?.createdBy || uid,
+          updatedAt: firestoreApi.serverTimestamp(), updatedBy: uid,
+          importedAt: firestoreApi.serverTimestamp(),
+        };
+        const sourceUpdatedAt = timestampFromIso(record.sourceUpdatedAt);
+        if (sourceUpdatedAt) payload.sourceUpdatedAt = sourceUpdatedAt;
+        operations.push({ type: "set", ref: firestoreApi.doc(db, "monthlyPerformanceOverrides", id), data: payload });
+      });
+
+      (Array.isArray(seed.monthlyPerformanceStatus) ? seed.monthlyPerformanceStatus : []).forEach((record) => {
+        const { yearMonth, year, month } = parseYearMonth(record.yearMonth);
+        const status = ["OPEN", "REVIEW", "CLOSED"].includes(String(record.status || "").toUpperCase()) ? String(record.status).toUpperCase() : "OPEN";
+        operations.push({ type: "set", ref: firestoreApi.doc(db, "monthlyPerformanceStatus", yearMonth), data: {
+          yearMonth, year, month, status, reason: String(record.reason || "").slice(0, 1000), validation: record.validation || null,
+          version: (Number(existingStatuses.get(yearMonth)?.version) || 0) + 1,
+          createdAt: existingStatuses.get(yearMonth)?.createdAt || firestoreApi.serverTimestamp(),
+          createdBy: existingStatuses.get(yearMonth)?.createdBy || uid,
+          updatedAt: firestoreApi.serverTimestamp(), updatedBy: uid,
+        }});
+      });
+
+      operations.push({ type: "set", ref: firestoreApi.doc(db, "hubSettings", "main"), data: {
+        schemaVersion: 3,
+        monthlyPerformanceMigrationId: String(seed.migrationId || "employee-hub-phase-3-monthly-performance"),
+        monthlyPerformanceImportedAt: firestoreApi.serverTimestamp(),
+        monthlyPerformanceImportedBy: uid,
+        monthlyPerformanceCounts: seed.counts || {},
+        monthlyPerformanceSourceSummary: seed.summaries || {},
+        updatedAt: firestoreApi.serverTimestamp(), updatedBy: uid,
+      }, options: { merge: true } });
+      operations.push({ type: "set", ref: firestoreApi.doc(firestoreApi.collection(db, "auditLogs")), data: {
+        actorId: uid, action: "IMPORT_EMPLOYEE_HUB_PHASE_3", targetType: "database",
+        targetId: String(seed.migrationId || "employee-hub-phase-3-monthly-performance"), before: null,
+        after: { counts: seed.counts || {}, legacyExceptions: seed.legacyExceptions?.length || 0 },
+        createdAt: firestoreApi.serverTimestamp(),
+      }});
+      await commitOperations(operations);
+      return {
+        entryCount: seed.dailyPerformanceEntries.length,
+        overrideCount: seed.monthlyPerformanceOverrides.length,
+        statusCount: seed.monthlyPerformanceStatus?.length || 0,
+        legacyExceptionCount: seed.legacyExceptions?.length || 0,
+      };
+    } catch (error) {
+      throw friendlyError(error, "นำเข้า Monthly Performance Phase 3 ไม่สำเร็จ");
+    }
+  }
+
   async function signIn(email, password) {
     assertReady();
     try {
@@ -425,6 +937,11 @@
         workdayImportedBy: String(row.workdayImportedBy || ""),
         workdayCounts: row.workdayCounts || {},
         workdaySourceSummary: row.workdaySourceSummary || {},
+        monthlyPerformanceMigrationId: String(row.monthlyPerformanceMigrationId || ""),
+        monthlyPerformanceImportedAt: toIso(row.monthlyPerformanceImportedAt),
+        monthlyPerformanceImportedBy: String(row.monthlyPerformanceImportedBy || ""),
+        monthlyPerformanceCounts: row.monthlyPerformanceCounts || {},
+        monthlyPerformanceSourceSummary: row.monthlyPerformanceSourceSummary || {},
       };
     } catch (error) {
       throw friendlyError(error, "อ่านสถานะ Migration ไม่สำเร็จ");
@@ -1170,6 +1687,17 @@
     reorderEmployeeCodesByStartDate,
     importMigrationSeed,
     importWorkdayPhase2Seed,
+    loadDailyPerformanceEntries,
+    loadMonthlyPerformanceOverrides,
+    loadMonthlyPerformanceMonthStatus,
+    loadMonthlyPerformanceSnapshot,
+    saveDailyPerformanceEntry,
+    saveDailyPerformanceEntriesBatch,
+    deleteDailyPerformanceEntry,
+    saveMonthlyPerformanceOverride,
+    deleteMonthlyPerformanceOverride,
+    setMonthlyPerformanceMonthStatus,
+    importMonthlyPerformancePhase3Seed,
   });
 
   global.EmployeeHubDatabase = api;
