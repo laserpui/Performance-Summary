@@ -284,7 +284,7 @@ function renderDashboard() {
         ${moduleCard({ icon: "users-round", title: "Employee Master", description: "รายชื่อ รหัสพนักงาน วันที่เริ่มงาน และ Legacy IDs", status: state.employees.length ? "เชื่อมต่อแล้ว" : "รอนำเข้า", statusClass: state.employees.length ? "badge-ready" : "badge-progress", view: "employees" })}
         ${moduleCard({ icon: "badge-dollar-sign", title: "Service Incentive", description: "บันทึกยอดขาย ประเมิน เวลา และยอดรวมรายเดือน", status: state.incentives.length ? "ใช้งานได้" : "รอนำเข้า", statusClass: state.incentives.length ? "badge-ready" : "badge-progress", view: "service" })}
         ${moduleCard({ icon: "chart-no-axes-combined", title: "Performance Summary", description: "ฐานข้อมูล Firebase เดิมยังทำงานปกติ เตรียมรวม UI ในระยะถัดไป", status: "เชื่อมฐานข้อมูลแล้ว", statusClass: "badge-ready", view: "performance" })}
-        ${moduleCard({ icon: "calendar-clock", title: "Workday Insight", description: "เวลาสายรายเดือน วันลา ลาบวช และสรุปสิทธิ์", status: workdayReady ? "ใช้งานได้" : "รอนำเข้า", statusClass: workdayReady ? "badge-ready" : "badge-progress", view: "workday" })}
+        ${moduleCard({ icon: "calendar-clock", title: "Workday Insight", description: "เวลาสายรายเดือน วันลา และสรุปสิทธิ์", status: workdayReady ? "ใช้งานได้" : "รอนำเข้า", statusClass: workdayReady ? "badge-ready" : "badge-progress", view: "workday" })}
         ${moduleCard({ icon: "clipboard-check", title: "Monthly Performance", description: "คะแนนรายวัน สถานะการทำงาน และการปิดเดือน", status: "Phase 3", statusClass: "badge-planned", view: "monthly" })}
         ${moduleCard({ icon: "database-zap", title: "Migration Center", description: "จัดการ Seed ของ Phase 1 และ Workday Phase 2 แบบตรวจสอบได้", status: workdayReady ? "Phase 2 แล้ว" : (migrationReady ? "Phase 1 แล้ว" : "พร้อมนำเข้า"), statusClass: migrationReady ? "badge-ready" : "badge-progress", view: "migration" })}
       </div>
@@ -593,8 +593,8 @@ const LEAVE_TYPE_LABELS = Object.freeze({
   sick: "ลาป่วย",
   personal: "ลากิจ",
   vacation: "ลาพักร้อน",
-  ordination: "ลาบวช",
-  other: "ลาอื่น ๆ",
+  ordination: "ลาอื่น ๆ · ลาบวช",
+  other: "ลาอื่น ๆ · อื่น ๆ",
 });
 
 function calculateLateScore(lateMinutes) {
@@ -794,7 +794,7 @@ function renderLeaveSection() {
   return `
     <div class="split-grid workday-entry-grid">
       <article class="panel">
-        <div class="panel-head"><div><h2>${editing ? "แก้ไขวันลา" : "บันทึกวันลา"}</h2><p>รองรับลาป่วย ลากิจ พักร้อน ลาบวช และลาอื่น ๆ</p></div>${editing ? `<span class="badge badge-progress">กำลังแก้ไข</span>` : ""}</div>
+        <div class="panel-head"><div><h2>${editing ? "แก้ไขวันลา" : "บันทึกวันลา"}</h2><p>รองรับลาป่วย ลากิจ พักร้อน และลาอื่น ๆ โดยลาบวชรวมอยู่ในหมวดลาอื่น</p></div>${editing ? `<span class="badge badge-progress">กำลังแก้ไข</span>` : ""}</div>
         <form id="leaveForm">
           <div class="form-grid">
             <div class="field"><label for="leaveEmployee">พนักงาน</label><select id="leaveEmployee" required><option value="">เลือกพนักงาน</option>${employees.map((employee) => `<option value="${escapeHtml(employee.id)}" ${(editing?.employeeId || "") === employee.id ? "selected" : ""}>${escapeHtml(`${employee.employeeCode} · ${employee.fullName}`)}</option>`).join("")}</select></div>
@@ -851,7 +851,7 @@ function renderLeaveBalanceSection() {
         ? `<div class="notice notice-info"><i data-lucide="info"></i><div>พักร้อนตามเกณฑ์ 6/8/10/12/14/15 วัน และคำนวณอายุงาน ณ <strong>${settings.vacationReference === "yearEnd" ? "สิ้นปี" : "วันที่ 1 มกราคม"}</strong> · อัปเดต ${formatDate(settings.updatedAt)}</div></div>`
         : `<div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div><strong>ยังไม่ได้ตั้งค่าสิทธิ์วันลาของบริษัท</strong><br>ระบบจะแสดงจำนวนวันที่ใช้แล้ว แต่ยังไม่แสดงยอดคงเหลือจนกว่าจะบันทึกกฎในปุ่ม “ตั้งค่าสิทธิ์”</div></div>`}
       <div class="table-wrap" style="margin-top:16px"><table class="balance-table">
-        <thead><tr><th>รหัส</th><th>ชื่อพนักงาน</th><th>อายุงาน</th><th class="money">ลาป่วย ใช้/สิทธิ์/คงเหลือ</th><th class="money">ลากิจ ใช้/สิทธิ์/คงเหลือ</th><th class="money">พักร้อน ใช้/สิทธิ์/คงเหลือ</th><th class="money">ลาบวช</th><th class="money">ลาอื่น</th></tr></thead>
+        <thead><tr><th>รหัส</th><th>ชื่อพนักงาน</th><th>อายุงาน</th><th class="money">ลาป่วย ใช้/สิทธิ์/คงเหลือ</th><th class="money">ลากิจ ใช้/สิทธิ์/คงเหลือ</th><th class="money">พักร้อน ใช้/สิทธิ์/คงเหลือ</th><th class="money">ลาอื่น (รวมลาบวช)</th></tr></thead>
         <tbody>${employees.map((employee) => {
           const used = usedByEmployee.get(employee.id) || {};
           const refDate = settings.vacationReference === "yearEnd" ? `${state.workdayYear}-12-31` : `${state.workdayYear}-01-01`;
@@ -862,7 +862,8 @@ function renderLeaveBalanceSection() {
             [used.personal || 0, settings.configured ? settings.personalAnnualDays : null],
             [used.vacation || 0, vacationAllowed],
           ].map(([usedDays, allowed]) => allowed === null ? `${formatNumber(usedDays)} / - / -` : `${formatNumber(usedDays)} / ${formatNumber(allowed)} / <strong class="${allowed-usedDays<0?"negative":"positive"}">${formatNumber(allowed-usedDays)}</strong>`);
-          return `<tr><td><strong>${escapeHtml(employee.employeeCode)}</strong></td><td>${escapeHtml(employee.fullName)}</td><td>${serviceYears} ปี</td><td class="money">${cells[0]}</td><td class="money">${cells[1]}</td><td class="money">${cells[2]}</td><td class="money">${formatNumber(used.ordination || 0)}</td><td class="money">${formatNumber(used.other || 0)}</td></tr>`;
+          const otherLeaveUsed = (Number(used.ordination) || 0) + (Number(used.other) || 0);
+          return `<tr><td><strong>${escapeHtml(employee.employeeCode)}</strong></td><td>${escapeHtml(employee.fullName)}</td><td>${serviceYears} ปี</td><td class="money">${cells[0]}</td><td class="money">${cells[1]}</td><td class="money">${cells[2]}</td><td class="money">${formatNumber(otherLeaveUsed)}</td></tr>`;
         }).join("")}</tbody>
       </table></div>
     </article>`;
@@ -1173,7 +1174,7 @@ function showWorkdaySeedPreview(seed) {
     <div class="modal-backdrop"><section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="workdaySeedPreviewTitle">
       <div class="modal-head"><div><p class="eyebrow">WORKDAY PHASE 2 SEED</p><h2 id="workdaySeedPreviewTitle">ตรวจไฟล์นำเข้า</h2></div><button id="closeModalButton" class="icon-button" type="button"><i data-lucide="x"></i></button></div>
       <div class="notice notice-success"><i data-lucide="badge-check"></i><div>Schema Version ${escapeHtml(seed.schemaVersion)} · Migration ID ${escapeHtml(seed.migrationId)}</div></div>
-      <div class="code-block" style="margin-top:14px">เวลาสาย: ${seed.attendanceMonthly?.length || 0} รายการ\nวันลา: ${seed.leaveRecords?.length || 0} รายการ\nช่วงเวลาสาย: ${escapeHtml(firstAttendance?.yearMonth || "-")} ถึง ${escapeHtml(lastAttendance?.yearMonth || "-")}\nไม่นำเข้า: ${seed.excludedSourceRecords?.length || 0} รายการ\nเดือนที่ไม่มีแถวต้นฉบับ: ${seed.missingAttendanceMonths?.length || 0}\nวันลาป่วย: ${formatNumber(summaries.sick || 0)}\nลากิจ: ${formatNumber(summaries.personal || 0)}\nพักร้อน: ${formatNumber(summaries.vacation || 0)}\nลาบวช: ${formatNumber(summaries.ordination || 0)}</div>
+      <div class="code-block" style="margin-top:14px">เวลาสาย: ${seed.attendanceMonthly?.length || 0} รายการ\nวันลา: ${seed.leaveRecords?.length || 0} รายการ\nช่วงเวลาสาย: ${escapeHtml(firstAttendance?.yearMonth || "-")} ถึง ${escapeHtml(lastAttendance?.yearMonth || "-")}\nไม่นำเข้า: ${seed.excludedSourceRecords?.length || 0} รายการ\nเดือนที่ไม่มีแถวต้นฉบับ: ${seed.missingAttendanceMonths?.length || 0}\nวันลาป่วย: ${formatNumber(summaries.sick || 0)}\nลากิจ: ${formatNumber(summaries.personal || 0)}\nพักร้อน: ${formatNumber(summaries.vacation || 0)}\nลาอื่น (รวมลาบวช): ${formatNumber((summaries.ordination || 0) + (summaries.other || 0))}</div>
       <div class="notice notice-warning" style="margin-top:14px"><i data-lucide="info"></i><div>Seed ไม่เติม 0 ให้เดือนที่ไม่มี Attendance Record และยังไม่กำหนดสิทธิ์วันลาของบริษัทแทนผู้ใช้</div></div>
       <div class="form-actions"><button id="closeWorkdaySeedPreview" class="button button-primary" type="button">ปิด</button></div>
     </section></div>`;
