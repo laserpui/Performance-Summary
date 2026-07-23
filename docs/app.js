@@ -42,6 +42,17 @@ const PERFORMANCE_KPIS = Object.freeze([
   { id: "discipline", title: "การเคารพกฎระเบียบบริษัท", weight: 2, icon: "shield-check" },
 ]);
 const PERFORMANCE_DEFAULT_SCORE = 60;
+const PERFORMANCE_GPA_INCENTIVE_BANDS = Object.freeze([
+  { min: 3.80, max: 4.00, amount: 3000, label: "3.80–4.00" },
+  { min: 3.60, max: 3.79, amount: 2000, label: "3.60–3.79" },
+  { min: 3.40, max: 3.59, amount: 1500, label: "3.40–3.59" },
+  { min: 3.10, max: 3.39, amount: 1000, label: "3.10–3.39" },
+  { min: 2.80, max: 3.09, amount: 750, label: "2.80–3.09" },
+  { min: 2.50, max: 2.79, amount: 500, label: "2.50–2.79" },
+  { min: 2.00, max: 2.49, amount: 0, label: "2.00–2.49" },
+  { min: 1.00, max: 1.99, amount: -1000, label: "1.00–1.99" },
+  { min: 0.50, max: 0.99, amount: -2000, label: "0.50–0.99" },
+]);
 
 // ข้อมูลย้อนหลังปี 2568 จากไฟล์ต้นฉบับมีเฉพาะคะแนนเฉลี่ยประจำปีรายบุคคล
 // ไม่พบคะแนนรายเดือนหรือคะแนนแยก 6 หัวข้อ จึงแสดงแบบ Read-only โดยไม่สร้างข้อมูลขึ้นใหม่
@@ -78,6 +89,9 @@ const state = {
   performanceSyncData: null,
   performanceSyncLoading: false,
   performanceSyncKey: "",
+  performanceIncentiveData: null,
+  performanceIncentiveLoading: false,
+  performanceIncentiveKey: "",
   performanceManualOverride: false,
   performanceYear: new Date().getFullYear() + 543,
   performanceMonth: new Date().getMonth(),
@@ -262,7 +276,11 @@ function showView(viewName) {
   document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === viewName));
   window.location.hash = viewName;
   renderCurrentView();
-  if (viewName === "performance") void refreshPerformanceData();
+  if (viewName === "performance") void refreshPerformanceData().then(() => {
+    if (state.performanceTab === "sync" && !isLegacyAnnualPerformanceYear()) void refreshPerformanceSyncData();
+    if (state.performanceTab === "incentive" && !isLegacyAnnualPerformanceYear()) void refreshPerformanceIncentiveData();
+    if (state.performanceTab === "employee360" && !state.employee360Data) void refreshEmployee360Data();
+  });
   if (viewName === "workday") void refreshWorkdayData();
   if (viewName === "monthly") void refreshMonthlyData();
   if (viewName === "closing") void refreshClosingData({ force: true, quiet: true });
@@ -367,7 +385,7 @@ function renderDashboard() {
         ${moduleCard({ icon: "chart-no-axes-combined", title: "Performance Summary", description: "บันทึกคะแนน KPI ประวัติ รายงาน และ Employee 360° ใน Web เดียว", status: "ใช้งานได้", statusClass: "badge-ready", view: "performance" })}
         ${moduleCard({ icon: "calendar-clock", title: "Workday Insight", description: "เวลาสายรายเดือน วันลา และสรุปสิทธิ์", status: workdayReady ? "ใช้งานได้" : "ยังไม่มีข้อมูล", statusClass: workdayReady ? "badge-ready" : "badge-progress", view: "workday" })}
         ${moduleCard({ icon: "clipboard-check", title: "Monthly Performance", description: "คะแนนรายวัน สถานะการทำงาน วันทำงานจริง และการปิดเดือน", status: state.migrationStatus?.monthlyPerformanceMigrationId ? "ใช้งานได้" : "ยังไม่มีข้อมูล", statusClass: state.migrationStatus?.monthlyPerformanceMigrationId ? "badge-ready" : "badge-progress", view: "monthly" })}
-        ${moduleCard({ icon: "calendar-check-2", title: "ศูนย์ปิดรอบเดือน", description: "ตรวจ Workday, Monthly, Score Sync, กฎระเบียบ และ Service Incentive ในหน้าเดียว", status: "พร้อมตรวจ", statusClass: "badge-ready", view: "closing" })}
+        ${moduleCard({ icon: "calendar-check-2", title: "ศูนย์ปิดรอบเดือน", description: "ตรวจ Workday, Monthly, Score Sync, GPA → เงินประเมิน และ Service Incentive ในหน้าเดียว", status: "พร้อมตรวจ", statusClass: "badge-ready", view: "closing" })}
         ${moduleCard({ icon: "shield-check", title: "ระบบและสำรองข้อมูล", description: "ตรวจความสมบูรณ์ของข้อมูล ดาวน์โหลด Backup และตรวจรายการ Production", status: state.systemHealth?.status === "ok" ? "ระบบปกติ" : "พร้อมตรวจ", statusClass: state.systemHealth?.status === "ok" ? "badge-ready" : "badge-progress", view: "system" })}
       </div>
 
@@ -588,6 +606,9 @@ function renderService() {
         timeAmount: document.getElementById("timeAmount").value,
         expectedVersion: existing?.version || 0,
       });
+      state.performanceIncentiveKey = "";
+      state.performanceIncentiveData = null;
+      state.closingDataKey = "";
       showToast(existing ? "อัปเดต Service Incentive แล้ว" : "บันทึก Service Incentive แล้ว");
       await refreshData({ quiet: true });
     } catch (error) {
@@ -663,6 +684,17 @@ function calculatePerformanceSummary(scores) {
   });
   const gpa = weighted.reduce((sum, row) => sum + row.weighted, 0) / 20;
   return { gpa, percentage: gpa * 25 };
+}
+
+function roundedPerformanceGpa(value) {
+  return Math.round((Number(value) + Number.EPSILON) * 100) / 100;
+}
+
+function performanceGpaIncentiveMeta(gpa) {
+  const roundedGpa = roundedPerformanceGpa(gpa);
+  if (!Number.isFinite(roundedGpa)) return null;
+  const band = PERFORMANCE_GPA_INCENTIVE_BANDS.find((item) => roundedGpa >= item.min && roundedGpa <= item.max);
+  return band ? { ...band, gpa: roundedGpa } : null;
 }
 
 function performanceResultMeta(percentage) {
@@ -774,12 +806,12 @@ function performanceResultsForMonth() {
 
 function renderPerformance() {
   const legacyAnnual = isLegacyAnnualPerformanceYear();
-  if (legacyAnnual && ["entry", "sync"].includes(state.performanceTab)) state.performanceTab = "dashboard";
+  if (legacyAnnual && ["entry", "sync", "incentive"].includes(state.performanceTab)) state.performanceTab = "dashboard";
   const firstLoading = state.performanceLoading && !state.performanceDataKey;
   els.performanceView.innerHTML = `
     <div class="page-grid">
       <article class="panel performance-hero">
-        <div class="panel-head"><div><h2>Performance Summary</h2><p>${legacyAnnual ? "ข้อมูลปี 2568 เป็นคะแนนสรุปรายปีจากไฟล์ต้นฉบับ และเปิดดูแบบ Read-only" : "บันทึกและวิเคราะห์คะแนน KPI รายเดือนจากฐานข้อมูล Firebase เดิม"}</p></div><span class="badge badge-ready">Phase 5.2.1</span></div>
+        <div class="panel-head"><div><h2>Performance Summary</h2><p>${legacyAnnual ? "ข้อมูลปี 2568 เป็นคะแนนสรุปรายปีจากไฟล์ต้นฉบับ และเปิดดูแบบ Read-only" : "บันทึกและวิเคราะห์คะแนน KPI รายเดือนจากฐานข้อมูล Firebase เดิม"}</p></div><span class="badge badge-ready">Phase 6.1</span></div>
         <div class="performance-toolbar">
           <div class="field compact-field"><label for="performanceYearPicker">ปีประเมิน</label><select id="performanceYearPicker">${performanceYearOptions()}</select></div>
           <div class="field compact-field"><label for="performanceMonthPicker">${legacyAnnual ? "รูปแบบข้อมูล" : "เดือน"}</label><select id="performanceMonthPicker" ${legacyAnnual ? "disabled" : ""}>${legacyAnnual ? '<option value="annual">สรุปรายปี</option>' : performanceMonthOptions()}</select></div>
@@ -788,6 +820,7 @@ function renderPerformance() {
           ${performanceTabButton("dashboard", "layout-dashboard", "ภาพรวม")}
           ${legacyAnnual ? "" : performanceTabButton("entry", "square-pen", "บันทึกคะแนน")}
           ${legacyAnnual ? "" : performanceTabButton("sync", "refresh-cw", "เชื่อมคะแนน")}
+          ${legacyAnnual ? "" : performanceTabButton("incentive", "coins", "เงินประเมิน")}
           ${performanceTabButton("history", "history", "ประวัติ")}
           ${performanceTabButton("reports", "file-down", "รายงาน")}
           ${performanceTabButton("employee360", "scan-face", "รายงานรวม 360°")}
@@ -798,13 +831,16 @@ function renderPerformance() {
 
   document.getElementById("performanceYearPicker")?.addEventListener("change", (event) => {
     state.performanceYear = Number(event.target.value);
-    if (isLegacyAnnualPerformanceYear() && ["entry", "sync"].includes(state.performanceTab)) state.performanceTab = "dashboard";
+    if (isLegacyAnnualPerformanceYear() && ["entry", "sync", "incentive"].includes(state.performanceTab)) state.performanceTab = "dashboard";
     state.performanceDataKey = "";
     state.performanceSyncKey = "";
     state.performanceSyncData = null;
+    state.performanceIncentiveKey = "";
+    state.performanceIncentiveData = null;
     state.performanceManualOverride = false;
     void refreshPerformanceData({ force: true }).then(() => {
       if (state.performanceTab === "sync" && !isLegacyAnnualPerformanceYear()) void refreshPerformanceSyncData({ force: true });
+      if (state.performanceTab === "incentive" && !isLegacyAnnualPerformanceYear()) void refreshPerformanceIncentiveData({ force: true });
     });
   });
   document.getElementById("performanceMonthPicker")?.addEventListener("change", (event) => {
@@ -812,9 +848,12 @@ function renderPerformance() {
     state.performanceMonth = Number(event.target.value);
     state.performanceSyncKey = "";
     state.performanceSyncData = null;
+    state.performanceIncentiveKey = "";
+    state.performanceIncentiveData = null;
     state.performanceManualOverride = false;
     renderPerformance();
     if (state.performanceTab === "sync") void refreshPerformanceSyncData({ force: true });
+    if (state.performanceTab === "incentive") void refreshPerformanceIncentiveData({ force: true });
   });
   els.performanceView.querySelectorAll("[data-performance-tab]").forEach((button) => button.addEventListener("click", () => {
     state.performanceTab = button.dataset.performanceTab;
@@ -822,15 +861,17 @@ function renderPerformance() {
     renderPerformance();
     if (state.performanceTab === "employee360" && !state.employee360Data) void refreshEmployee360Data();
     if (state.performanceTab === "sync" && !isLegacyAnnualPerformanceYear()) void refreshPerformanceSyncData();
+    if (state.performanceTab === "incentive" && !isLegacyAnnualPerformanceYear()) void refreshPerformanceIncentiveData();
   }));
   bindPerformanceTabEvents();
   ensureIcons();
 }
 
 function renderPerformanceTabContent() {
-  if (isLegacyAnnualPerformanceYear() && ["entry", "sync"].includes(state.performanceTab)) return renderLegacyAnnualPerformanceDashboard();
+  if (isLegacyAnnualPerformanceYear() && ["entry", "sync", "incentive"].includes(state.performanceTab)) return renderLegacyAnnualPerformanceDashboard();
   if (state.performanceTab === "entry") return renderPerformanceEntry();
   if (state.performanceTab === "sync") return renderPerformanceSync();
+  if (state.performanceTab === "incentive") return renderPerformanceIncentiveSync();
   if (state.performanceTab === "history") return renderPerformanceHistory();
   if (state.performanceTab === "reports") return renderPerformanceReports();
   if (state.performanceTab === "employee360") return renderEmployee360();
@@ -1091,10 +1132,169 @@ async function syncPerformanceRows(rows) {
     }
   }
   state.performanceSyncKey = "";
+  state.performanceIncentiveKey = "";
+  state.performanceIncentiveData = null;
   await refreshPerformanceSyncData({ force: true, quiet: true });
   setBusy(false);
   if (errors.length) showToast(`ส่งสำเร็จ ${success} คน · ไม่สำเร็จ ${errors.length} คน\n${errors.slice(0, 3).join("\n")}`, "warning", 9000);
   else showToast(`ส่งคะแนนสำเร็จ ${success} คน`);
+}
+
+
+function performanceIncentiveYearMonth() {
+  return performanceSyncYearMonth();
+}
+
+async function refreshPerformanceIncentiveData({ force = false, quiet = false } = {}) {
+  if (!state.user || isLegacyAnnualPerformanceYear()) return;
+  const yearMonth = performanceIncentiveYearMonth();
+  if (!force && state.performanceIncentiveKey === yearMonth && state.performanceIncentiveData && !state.performanceIncentiveLoading) return;
+  state.performanceIncentiveLoading = true;
+  if (!quiet) setSyncStatus("syncing", "กำลังตรวจเงินประเมินจาก GPA");
+  if (state.currentView === "performance" && state.performanceTab === "incentive") renderPerformance();
+  try {
+    state.performanceIncentiveData = await window.EmployeeHubDatabase.loadPerformanceIncentiveSyncSnapshot(yearMonth);
+    state.performanceIncentiveKey = yearMonth;
+    setSyncStatus("online", "เชื่อมต่อแล้ว");
+  } catch (error) {
+    console.error(error);
+    setSyncStatus("error", "ตรวจเงินประเมินไม่สำเร็จ");
+    if (!quiet) showToast(error.message || "โหลดข้อมูลเงินประเมินไม่สำเร็จ", "error", 6500);
+  } finally {
+    state.performanceIncentiveLoading = false;
+    if (state.currentView === "performance" && state.performanceTab === "incentive") renderPerformance();
+  }
+}
+
+function buildPerformanceIncentiveRowsFromData(data, employees = sortedActiveEmployees()) {
+  if (!data) return [];
+  const evaluationByEmployee = new Map((data.evaluations || []).map((row) => [row.employeeId, row]));
+  const incentiveByEmployee = new Map((data.incentives || []).map((row) => [row.employeeId, row]));
+  return employees.map((employee) => {
+    const evaluation = evaluationByEmployee.get(employee.id) || null;
+    const incentive = incentiveByEmployee.get(employee.id) || null;
+    const result = evaluation ? calculatePerformanceSummary(evaluation.scores) : null;
+    const meta = result ? performanceGpaIncentiveMeta(result.gpa) : null;
+    const currentAmount = incentive ? Number(incentive.evaluationAmount) : null;
+    let status = "READY";
+    let reason = "พร้อมส่ง";
+    if (!evaluation) {
+      status = "PERFORMANCE_MISSING";
+      reason = "ยังไม่มี Performance Summary";
+    } else if (evaluation.disciplinePending === true) {
+      status = "DISCIPLINE_PENDING";
+      reason = "ยังไม่ได้กรอกคะแนนกฎระเบียบ";
+    } else if (!result) {
+      status = "INVALID_PERFORMANCE";
+      reason = "คะแนน Performance ไม่สมบูรณ์";
+    } else if (!meta) {
+      status = "NOT_APPLICABLE";
+      reason = "GPA ต่ำกว่า 0.50 ไม่อยู่ในเกณฑ์ที่กำหนด";
+    } else if (incentive && Math.abs(Number(currentAmount) - Number(meta.amount)) < 0.011) {
+      status = "SYNCED";
+      reason = "เงินประเมินตรงกับ GPA แล้ว";
+    } else if (incentive) {
+      status = "AMOUNT_CHANGED";
+      reason = "GPA หรือเงินประเมินเปลี่ยน ต้องส่งใหม่";
+    }
+    return {
+      employee,
+      evaluation,
+      incentive,
+      gpa: result ? roundedPerformanceGpa(result.gpa) : null,
+      percentage: result?.percentage ?? null,
+      expectedAmount: meta?.amount ?? null,
+      bandLabel: meta?.label || "",
+      currentAmount,
+      status,
+      reason,
+      ready: ["READY", "AMOUNT_CHANGED"].includes(status),
+    };
+  });
+}
+
+function buildPerformanceIncentiveRows() {
+  return buildPerformanceIncentiveRowsFromData(state.performanceIncentiveData, sortedActiveEmployees());
+}
+
+function performanceIncentiveStatusBadge(status) {
+  return ({
+    READY: "badge-ready",
+    SYNCED: "badge-info",
+    AMOUNT_CHANGED: "badge-progress",
+    PERFORMANCE_MISSING: "badge-danger",
+    DISCIPLINE_PENDING: "badge-danger",
+    INVALID_PERFORMANCE: "badge-danger",
+    NOT_APPLICABLE: "badge-planned",
+  })[status] || "badge-planned";
+}
+
+function renderPerformanceIncentiveSync() {
+  if (state.performanceIncentiveLoading && !state.performanceIncentiveData) return `<div class="loading-skeleton"></div>`;
+  const data = state.performanceIncentiveData;
+  if (!data) return `<article class="panel"><div class="empty-state"><i data-lucide="coins"></i><p>กำลังโหลดข้อมูลเงินประเมิน</p></div></article>`;
+  const rows = buildPerformanceIncentiveRows();
+  const readyCount = rows.filter((row) => row.ready).length;
+  const syncedCount = rows.filter((row) => row.status === "SYNCED").length;
+  const notApplicableCount = rows.filter((row) => row.status === "NOT_APPLICABLE").length;
+  const issueCount = rows.filter((row) => !row.ready && !["SYNCED", "NOT_APPLICABLE"].includes(row.status)).length;
+  return `
+    <div class="page-grid">
+      <article class="panel score-sync-hero">
+        <div class="panel-head"><div><h2>GPA → Service Incentive</h2><p>คำนวณเงินจาก GPA ที่กรอกครบแล้ว และส่งไปช่อง “ประเมิน” ของเดือนเดียวกัน</p></div><span class="badge badge-ready">Phase 6.1</span></div>
+        <div class="kpi-grid compact-kpi-grid">
+          <article class="kpi-card"><div class="kpi-head"><span>พร้อมส่ง</span><span class="kpi-icon"><i data-lucide="send"></i></span></div><div class="kpi-value">${readyCount}</div></article>
+          <article class="kpi-card"><div class="kpi-head"><span>ส่งแล้ว</span><span class="kpi-icon"><i data-lucide="circle-check"></i></span></div><div class="kpi-value">${syncedCount}</div></article>
+          <article class="kpi-card"><div class="kpi-head"><span>ไม่เข้าเกณฑ์</span><span class="kpi-icon"><i data-lucide="circle-minus"></i></span></div><div class="kpi-value">${notApplicableCount}</div></article>
+          <article class="kpi-card"><div class="kpi-head"><span>ต้องตรวจสอบ</span><span class="kpi-icon"><i data-lucide="triangle-alert"></i></span></div><div class="kpi-value">${issueCount}</div></article>
+        </div>
+        <div class="notice notice-info"><i data-lucide="shield-check"></i><div>ระบบปัด GPA เป็นทศนิยม 2 ตำแหน่งก่อนเทียบเกณฑ์ และอัปเดตเฉพาะช่อง <strong>ประเมิน</strong> โดยเก็บยอดขายของและยอดเวลาเดิมไว้ GPA ต่ำกว่า 0.50 จะแสดงว่าไม่เข้าเกณฑ์และไม่ส่งข้อมูลอัตโนมัติ</div></div>
+        <div class="performance-band-list">${PERFORMANCE_GPA_INCENTIVE_BANDS.map((band) => `<span class="badge badge-planned">GPA ${band.label} = ${formatMoney(band.amount)}</span>`).join("")}</div>
+        <div class="form-actions"><button id="refreshPerformanceIncentive" class="button button-secondary" type="button"><i data-lucide="scan-search"></i>ตรวจสอบใหม่</button><button id="syncReadyPerformanceIncentives" class="button button-primary" type="button" ${readyCount ? "" : "disabled"}><i data-lucide="send"></i>ส่งเงินที่พร้อม (${readyCount})</button></div>
+      </article>
+      <article class="panel">
+        <div class="panel-head"><div><h2>Preview เงินประเมิน ${PERFORMANCE_MONTHS[state.performanceMonth]} ${state.performanceYear}</h2><p>พนักงานและเดือนเดียวกันใน Performance Summary และ Service Incentive</p></div></div>
+        <div class="table-wrap score-sync-table"><table><thead><tr><th>พนักงาน</th><th class="money">GPA</th><th>เกณฑ์</th><th class="money">ประเมินเดิม</th><th class="money">ประเมินใหม่</th><th>สถานะ</th><th></th></tr></thead><tbody>
+          ${rows.map((row) => `<tr><td><strong>${escapeHtml(row.employee.employeeCode)}</strong><br><small>${escapeHtml(row.employee.fullName)}</small></td><td class="money"><strong>${Number.isFinite(row.gpa) ? formatNumber(row.gpa, 2) : "-"}</strong></td><td>${escapeHtml(row.bandLabel || "-")}</td><td class="money ${Number(row.currentAmount) < 0 ? "negative" : ""}">${row.incentive ? formatMoney(row.currentAmount) : "-"}</td><td class="money ${Number(row.expectedAmount) < 0 ? "negative" : ""}"><strong>${Number.isFinite(row.expectedAmount) ? formatMoney(row.expectedAmount) : "-"}</strong></td><td><span class="badge ${performanceIncentiveStatusBadge(row.status)}">${escapeHtml(row.reason)}</span></td><td><button class="button button-small ${row.ready ? "button-primary" : "button-ghost"} sync-performance-incentive-row" data-employee-id="${escapeHtml(row.employee.id)}" type="button" ${row.ready ? "" : "disabled"}><i data-lucide="send"></i>ส่ง</button></td></tr>`).join("")}
+        </tbody></table></div>
+      </article>
+    </div>`;
+}
+
+async function syncPerformanceIncentiveRows(rows) {
+  const readyRows = rows.filter((row) => row.ready);
+  if (!readyRows.length) return showToast("ไม่มีรายการเงินประเมินพร้อมส่ง", "warning");
+  const updateCount = readyRows.filter((row) => row.incentive).length;
+  const confirmed = window.confirm(`กำลังส่งเงินประเมิน ${readyRows.length} คน${updateCount ? ` และอัปเดตรายการเดิม ${updateCount} คน` : ""}\n\nระบบจะเปลี่ยนเฉพาะช่องประเมิน ยืนยันดำเนินการหรือไม่?`);
+  if (!confirmed) return;
+  setBusy(true, "กำลังส่งเงินประเมินไป Service Incentive");
+  let success = 0;
+  const errors = [];
+  for (const row of readyRows) {
+    try {
+      const result = await window.EmployeeHubDatabase.syncPerformanceGpaToServiceIncentive({
+        employeeId: row.employee.id,
+        yearMonth: performanceIncentiveYearMonth(),
+        expectedEvaluationVersion: row.evaluation?.version || 0,
+        expectedIncentiveVersion: row.incentive?.version || 0,
+      });
+      const saved = result.incentive;
+      state.incentives = state.incentives.filter((record) => record.id !== saved.id).concat(saved);
+      if (state.performanceIncentiveData) {
+        state.performanceIncentiveData.incentives = (state.performanceIncentiveData.incentives || []).filter((record) => record.id !== saved.id).concat(saved);
+      }
+      success += 1;
+    } catch (error) {
+      console.error(error);
+      errors.push(`${row.employee.employeeCode}: ${error.message || "ไม่สำเร็จ"}`);
+    }
+  }
+  state.performanceIncentiveKey = "";
+  await refreshPerformanceIncentiveData({ force: true, quiet: true });
+  state.closingDataKey = "";
+  setBusy(false);
+  if (errors.length) showToast(`ส่งสำเร็จ ${success} คน · ไม่สำเร็จ ${errors.length} คน\n${errors.slice(0, 3).join("\n")}`, "warning", 9000);
+  else showToast(`ส่งเงินประเมินสำเร็จ ${success} คน`);
 }
 
 function performanceScoreSourceLabel(existing, index) {
@@ -1279,6 +1479,12 @@ function bindPerformanceTabEvents() {
   document.getElementById("togglePerformanceOverride")?.addEventListener("click", () => { state.performanceManualOverride = !state.performanceManualOverride; renderPerformance(); });
   document.getElementById("refreshPerformanceSync")?.addEventListener("click", () => { state.performanceSyncKey = ""; void refreshPerformanceSyncData({ force: true }); });
   document.getElementById("syncReadyPerformanceScores")?.addEventListener("click", () => void syncPerformanceRows(buildPerformanceSyncRows()));
+  document.getElementById("refreshPerformanceIncentive")?.addEventListener("click", () => { state.performanceIncentiveKey = ""; void refreshPerformanceIncentiveData({ force: true }); });
+  document.getElementById("syncReadyPerformanceIncentives")?.addEventListener("click", () => void syncPerformanceIncentiveRows(buildPerformanceIncentiveRows()));
+  document.querySelectorAll(".sync-performance-incentive-row").forEach((button) => button.addEventListener("click", () => {
+    const row = buildPerformanceIncentiveRows().find((item) => item.employee.id === button.dataset.employeeId);
+    if (row) void syncPerformanceIncentiveRows([row]);
+  }));
   document.querySelectorAll(".sync-performance-row").forEach((button) => button.addEventListener("click", () => {
     const row = buildPerformanceSyncRows().find((item) => item.employee.id === button.dataset.employeeId);
     if (row) void syncPerformanceRows([row]);
@@ -1320,6 +1526,9 @@ function bindPerformanceTabEvents() {
       state.evaluationSummary.latestUpdatedAt = saved.updatedAt || new Date().toISOString();
       state.performanceManualOverride = false;
       state.performanceSyncKey = "";
+      state.performanceIncentiveKey = "";
+      state.performanceIncentiveData = null;
+      state.closingDataKey = "";
       showToast("บันทึก Performance Summary เรียบร้อยแล้ว");
       renderPerformance();
     } catch (error) { showToast(error.message || "บันทึกคะแนนไม่สำเร็จ", "error", 6500); }
@@ -2472,6 +2681,8 @@ function buildClosingSummary() {
   const attendanceByEmployee = new Map((snapshot.attendance || []).filter((row) => eligibleIds.has(row.employeeId)).map((row) => [row.employeeId, row]));
   const monthlyEmployeeIds = new Set((snapshot.monthlyEntries || []).filter((row) => eligibleIds.has(row.employeeId)).map((row) => row.employeeId));
   const incentiveByEmployee = new Map((data.incentives || []).filter((row) => eligibleIds.has(row.employeeId)).map((row) => [row.employeeId, row]));
+  const performanceIncentiveRows = buildPerformanceIncentiveRowsFromData({ evaluations: snapshot.evaluations || [], incentives: data.incentives || [] }, eligibleEmployees);
+  const performanceIncentiveByEmployee = new Map(performanceIncentiveRows.map((row) => [row.employee.id, row]));
   const validationEmployees = state.employees.map((employee) => ({ ...employee, isActive: eligibleIds.has(employee.id) }));
   const validation = validateMonthlyDataRecords(snapshot.monthlyEntries || [], snapshot.monthlyOverrides || [], validationEmployees, state.closingMonth);
   const monthClosed = String(snapshot.monthStatus?.status || "OPEN") === "CLOSED";
@@ -2482,6 +2693,7 @@ function buildClosingSummary() {
   const syncedCount = syncRows.filter((row) => row.status === "SYNCED").length;
   const disciplineCount = syncRows.filter(disciplineIsValid).length;
   const incentiveCount = eligibleEmployees.filter((employee) => incentiveByEmployee.has(employee.id)).length;
+  const gpaIncentiveCount = performanceIncentiveRows.filter((row) => ["SYNCED", "NOT_APPLICABLE"].includes(row.status)).length;
   const requiredSteps = [
     {
       id: "workday",
@@ -2519,6 +2731,15 @@ function buildClosingSummary() {
       count: `${disciplineCount}/${eligibleEmployees.length}`,
       actionLabel: "กรอกคะแนน",
     },
+    {
+      id: "gpaIncentive",
+      icon: "coins",
+      title: "5. เงินประเมินจาก GPA",
+      description: "ส่งจำนวนเงินจาก GPA ไปช่องประเมิน หรือยืนยันว่าไม่เข้าเกณฑ์",
+      done: eligibleEmployees.length > 0 && gpaIncentiveCount === eligibleEmployees.length,
+      count: `${gpaIncentiveCount}/${eligibleEmployees.length}`,
+      actionLabel: "เปิดเงินประเมิน",
+    },
   ];
   const recommendedSteps = [
     {
@@ -2548,14 +2769,17 @@ function buildClosingSummary() {
     const attendance = attendanceByEmployee.get(employee.id) || null;
     const monthly = monthlyEmployeeIds.has(employee.id);
     const incentive = incentiveByEmployee.get(employee.id) || null;
+    const performanceIncentive = performanceIncentiveByEmployee.get(employee.id) || null;
     return {
       employee,
       attendance,
       monthly,
       syncRow,
       incentive,
+      performanceIncentive,
       attendanceDone: attendanceIsValid(attendance),
       disciplineDone: disciplineIsValid(syncRow),
+      gpaIncentiveDone: ["SYNCED", "NOT_APPLICABLE"].includes(performanceIncentive?.status),
     };
   });
   return {
@@ -2568,7 +2792,7 @@ function buildClosingSummary() {
     operationalDone,
     coreReady,
     employees,
-    counts: { attendanceComplete, monthlyComplete, syncedCount, disciplineCount, incentiveCount },
+    counts: { attendanceComplete, monthlyComplete, syncedCount, disciplineCount, gpaIncentiveCount, incentiveCount },
   };
 }
 
@@ -2597,12 +2821,12 @@ function renderClosing() {
       <article class="panel closing-hero">
         <div class="panel-head"><div><p class="eyebrow">MONTH-END CONTROL</p><h2>ศูนย์ปิดรอบเดือน</h2><p>ตรวจขั้นตอนสำคัญก่อนสรุปคะแนนและสำรองข้อมูลประจำเดือน</p></div>${summary ? `<span class="badge ${summary.coreReady ? "badge-ready" : "badge-danger"}">${summary.coreReady ? "รอบประเมินพร้อม" : "ยังมีรายการค้าง"}</span>` : `<span class="badge badge-progress">กำลังตรวจ</span>`}</div>
         <div class="closing-toolbar"><div class="field compact-field"><label for="closingMonthPicker">เดือนที่ตรวจ</label><input id="closingMonthPicker" type="month" value="${escapeHtml(state.closingMonth)}" /></div><div class="panel-actions"><button id="refreshClosingButton" class="button button-secondary" type="button"><i data-lucide="refresh-cw"></i>ตรวจใหม่</button><button id="exportClosingButton" class="button button-primary" type="button" ${summary ? "" : "disabled"}><i data-lucide="download"></i>Export สถานะ</button></div></div>
-        ${summary ? `<div class="kpi-grid compact-kpi-grid closing-kpis"><article class="kpi-card"><div class="kpi-head"><span>ขั้นตอนจำเป็น</span><span class="kpi-icon"><i data-lucide="list-checks"></i></span></div><div class="kpi-value">${summary.requiredDone}/4</div><div class="kpi-note">ต้องครบก่อนสรุปรอบประเมิน</div></article><article class="kpi-card"><div class="kpi-head"><span>พนักงานในรอบ</span><span class="kpi-icon"><i data-lucide="users-round"></i></span></div><div class="kpi-value">${summary.eligibleEmployees.length}</div><div class="kpi-note">อ้างอิงวันที่เริ่มงาน</div></article><article class="kpi-card"><div class="kpi-head"><span>Monthly Error</span><span class="kpi-icon"><i data-lucide="triangle-alert"></i></span></div><div class="kpi-value ${summary.validation.counts.error ? "negative" : ""}">${summary.validation.counts.error}</div><div class="kpi-note">คำเตือน ${summary.validation.counts.warning}</div></article><article class="kpi-card"><div class="kpi-head"><span>งานทั้งหมด</span><span class="kpi-icon"><i data-lucide="gauge"></i></span></div><div class="kpi-value">${summary.operationalDone}/6</div><div class="kpi-note">รวม Incentive และ Backup</div></article></div>` : ""}
+        ${summary ? `<div class="kpi-grid compact-kpi-grid closing-kpis"><article class="kpi-card"><div class="kpi-head"><span>ขั้นตอนจำเป็น</span><span class="kpi-icon"><i data-lucide="list-checks"></i></span></div><div class="kpi-value">${summary.requiredDone}/5</div><div class="kpi-note">ต้องครบก่อนสรุปรอบประเมิน</div></article><article class="kpi-card"><div class="kpi-head"><span>พนักงานในรอบ</span><span class="kpi-icon"><i data-lucide="users-round"></i></span></div><div class="kpi-value">${summary.eligibleEmployees.length}</div><div class="kpi-note">อ้างอิงวันที่เริ่มงาน</div></article><article class="kpi-card"><div class="kpi-head"><span>Monthly Error</span><span class="kpi-icon"><i data-lucide="triangle-alert"></i></span></div><div class="kpi-value ${summary.validation.counts.error ? "negative" : ""}">${summary.validation.counts.error}</div><div class="kpi-note">คำเตือน ${summary.validation.counts.warning}</div></article><article class="kpi-card"><div class="kpi-head"><span>งานทั้งหมด</span><span class="kpi-icon"><i data-lucide="gauge"></i></span></div><div class="kpi-value">${summary.operationalDone}/7</div><div class="kpi-note">รวม Incentive และ Backup</div></article></div>` : ""}
       </article>
       ${firstLoading ? `<div class="loading-skeleton"></div>` : summary ? `
-      <article class="panel"><div class="panel-head"><div><h2>ขั้นตอนจำเป็น</h2><p>ระบบจะถือว่ารอบประเมินพร้อมเมื่อครบทั้ง 4 ขั้นตอน</p></div></div><div class="closing-step-grid">${summary.requiredSteps.map((step) => renderClosingStep(step, true)).join("")}</div></article>
+      <article class="panel"><div class="panel-head"><div><h2>ขั้นตอนจำเป็น</h2><p>ระบบจะถือว่ารอบประเมินพร้อมเมื่อครบทั้ง 5 ขั้นตอน</p></div></div><div class="closing-step-grid">${summary.requiredSteps.map((step) => renderClosingStep(step, true)).join("")}</div></article>
       <article class="panel"><div class="panel-head"><div><h2>รายการแนะนำหลังปิดรอบ</h2><p>ไม่บล็อกการสรุปคะแนน แต่ช่วยให้ข้อมูลประจำเดือนสมบูรณ์และกู้คืนได้</p></div></div><div class="closing-step-grid">${summary.recommendedSteps.map((step) => renderClosingStep(step, false)).join("")}</div></article>
-      <article class="panel"><div class="panel-head"><div><h2>ตรวจรายบุคคล</h2><p>ค้นหารายการที่ยังขาดได้ในตารางเดียว</p></div></div><div class="table-wrap closing-matrix"><table><thead><tr><th>พนักงาน</th><th>Workday</th><th>Monthly</th><th>Score Sync</th><th>กฎระเบียบ</th><th>Incentive</th></tr></thead><tbody>${summary.employees.map((row) => `<tr><td><strong>${escapeHtml(row.employee.employeeCode)}</strong><br><small>${escapeHtml(row.employee.fullName)}</small></td><td>${closingCellBadge(row.attendanceDone, row.attendance ? `${row.attendance.lateScore} คะแนน` : "ครบ", row.attendance ? "คะแนนไม่ถูกต้อง" : "ไม่มีข้อมูล")}</td><td>${closingCellBadge(row.monthly, "มีข้อมูล", "ไม่มีข้อมูล")}</td><td><span class="badge ${performanceSyncStatusBadge(row.syncRow?.status)}">${escapeHtml(row.syncRow?.reason || "ยังไม่มีข้อมูล")}</span></td><td>${closingCellBadge(row.disciplineDone, row.syncRow?.evaluation?.scores?.[5] ? `${row.syncRow.evaluation.scores[5]} คะแนน` : "กรอกแล้ว", "รอกรอก")}</td><td>${closingCellBadge(Boolean(row.incentive), row.incentive ? formatMoney(row.incentive.totalAmount) : "ครบ", "ไม่มีรายการ")}</td></tr>`).join("") || `<tr><td colspan="6"><div class="empty-state"><i data-lucide="users"></i><p>ไม่พบพนักงานสำหรับเดือนนี้</p></div></td></tr>`}</tbody></table></div></article>
+      <article class="panel"><div class="panel-head"><div><h2>ตรวจรายบุคคล</h2><p>ค้นหารายการที่ยังขาดได้ในตารางเดียว</p></div></div><div class="table-wrap closing-matrix"><table><thead><tr><th>พนักงาน</th><th>Workday</th><th>Monthly</th><th>Score Sync</th><th>กฎระเบียบ</th><th>GPA → ประเมิน</th><th>Incentive</th></tr></thead><tbody>${summary.employees.map((row) => `<tr><td><strong>${escapeHtml(row.employee.employeeCode)}</strong><br><small>${escapeHtml(row.employee.fullName)}</small></td><td>${closingCellBadge(row.attendanceDone, row.attendance ? `${row.attendance.lateScore} คะแนน` : "ครบ", row.attendance ? "คะแนนไม่ถูกต้อง" : "ไม่มีข้อมูล")}</td><td>${closingCellBadge(row.monthly, "มีข้อมูล", "ไม่มีข้อมูล")}</td><td><span class="badge ${performanceSyncStatusBadge(row.syncRow?.status)}">${escapeHtml(row.syncRow?.reason || "ยังไม่มีข้อมูล")}</span></td><td>${closingCellBadge(row.disciplineDone, row.syncRow?.evaluation?.scores?.[5] ? `${row.syncRow.evaluation.scores[5]} คะแนน` : "กรอกแล้ว", "รอกรอก")}</td><td><span class="badge ${performanceIncentiveStatusBadge(row.performanceIncentive?.status)}">${escapeHtml(row.performanceIncentive?.reason || "ยังไม่มีข้อมูล")}</span></td><td>${closingCellBadge(Boolean(row.incentive), row.incentive ? formatMoney(row.incentive.totalAmount) : "ครบ", "ไม่มีรายการ")}</td></tr>`).join("") || `<tr><td colspan="7"><div class="empty-state"><i data-lucide="users"></i><p>ไม่พบพนักงานสำหรับเดือนนี้</p></div></td></tr>`}</tbody></table></div></article>
       ` : `<article class="panel"><div class="empty-state"><i data-lucide="calendar-search"></i><p>กำลังโหลดข้อมูลสำหรับปิดรอบเดือน</p></div></article>`}
     </div>`;
 
@@ -2650,6 +2874,14 @@ function openClosingAction(action, summary = buildClosingSummary()) {
     state.performanceManualOverride = false;
     return showView("performance");
   }
+  if (action === "gpaIncentive") {
+    state.performanceYear = performanceYear;
+    state.performanceMonth = performanceMonth;
+    state.performanceTab = "incentive";
+    state.performanceIncentiveKey = "";
+    state.performanceIncentiveData = null;
+    return showView("performance");
+  }
   if (action === "service") {
     state.serviceMonth = state.closingMonth;
     state.serviceEmployeeId = "";
@@ -2661,7 +2893,7 @@ function openClosingAction(action, summary = buildClosingSummary()) {
 function exportClosingStatusCsv() {
   const summary = buildClosingSummary();
   if (!summary) return showToast("ยังไม่มีข้อมูลสำหรับ Export", "warning");
-  const rows = [["เดือน", "รหัสพนักงาน", "ชื่อพนักงาน", "Workday", "คะแนนเวลา", "Monthly", "Score Sync", "กฎระเบียบ", "คะแนนกฎระเบียบ", "Service Incentive"]];
+  const rows = [["เดือน", "รหัสพนักงาน", "ชื่อพนักงาน", "Workday", "คะแนนเวลา", "Monthly", "Score Sync", "กฎระเบียบ", "คะแนนกฎระเบียบ", "GPA", "เงินประเมินตาม GPA", "สถานะเงินประเมิน", "Service Incentive"]];
   summary.employees.forEach((row) => rows.push([
     state.closingMonth,
     row.employee.employeeCode,
@@ -2672,6 +2904,9 @@ function exportClosingStatusCsv() {
     row.syncRow?.reason || "ยังไม่มีข้อมูล",
     row.disciplineDone ? "กรอกแล้ว" : "รอกรอก",
     row.syncRow?.evaluation?.scores?.[5] ?? "",
+    row.performanceIncentive?.gpa ?? "",
+    row.performanceIncentive?.expectedAmount ?? "",
+    row.performanceIncentive?.reason || "ยังไม่มีข้อมูล",
     row.incentive ? row.incentive.totalAmount : "",
   ]));
   downloadCsv(rows, `month-end-status-${state.closingMonth}.csv`);

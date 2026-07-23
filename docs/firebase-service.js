@@ -223,6 +223,31 @@
     };
   }
 
+  const PERFORMANCE_GPA_WEIGHTS = Object.freeze([5, 4, 3, 3, 3, 2]);
+  const PERFORMANCE_GPA_INCENTIVE_BANDS = Object.freeze([
+    { min: 3.80, max: 4.00, amount: 3000 },
+    { min: 3.60, max: 3.79, amount: 2000 },
+    { min: 3.40, max: 3.59, amount: 1500 },
+    { min: 3.10, max: 3.39, amount: 1000 },
+    { min: 2.80, max: 3.09, amount: 750 },
+    { min: 2.50, max: 2.79, amount: 500 },
+    { min: 2.00, max: 2.49, amount: 0 },
+    { min: 1.00, max: 1.99, amount: -1000 },
+    { min: 0.50, max: 0.99, amount: -2000 },
+  ]);
+
+  function calculatePerformanceGpa(scores) {
+    const normalized = normalizePerformanceScores(scores);
+    const weighted = normalized.reduce((sum, score, index) => sum + ((score / 20) - 1) * PERFORMANCE_GPA_WEIGHTS[index], 0);
+    return Math.round(((weighted / 20) + Number.EPSILON) * 100) / 100;
+  }
+
+  function performanceGpaIncentiveAmount(gpa) {
+    const rounded = Math.round((Number(gpa) + Number.EPSILON) * 100) / 100;
+    const band = PERFORMANCE_GPA_INCENTIVE_BANDS.find((item) => rounded >= item.min && rounded <= item.max);
+    return band ? band.amount : null;
+  }
+
   function normalizePerformanceScores(scores) {
     if (!Array.isArray(scores) || scores.length !== 6) throw new Error("ต้องกรอกคะแนนให้ครบ 6 หัวข้อ");
     return scores.map((value) => {
@@ -1125,6 +1150,118 @@
     }
   }
 
+
+  async function loadPerformanceIncentiveSyncSnapshot(yearMonth) {
+    assertReady();
+    const parsed = parseYearMonth(yearMonth);
+    const thaiYear = parsed.year + 543;
+    try {
+      const [evaluations, incentives] = await Promise.all([
+        loadPerformanceEvaluations(thaiYear),
+        loadServiceIncentives(parsed.yearMonth),
+      ]);
+      return {
+        yearMonth: parsed.yearMonth,
+        year: parsed.year,
+        month: parsed.month,
+        thaiYear,
+        evaluations: evaluations.filter((row) => row.month === parsed.month - 1),
+        incentives,
+      };
+    } catch (error) {
+      throw friendlyError(error, "โหลดข้อมูลเงินประเมินจาก GPA ไม่สำเร็จ");
+    }
+  }
+
+  async function syncPerformanceGpaToServiceIncentive(input) {
+    assertReady();
+    const uid = currentUid();
+    const employeeId = String(input.employeeId || "").trim();
+    const parsed = parseYearMonth(input.yearMonth);
+    if (!employeeId) throw new Error("ไม่พบพนักงานสำหรับส่งเงินประเมิน");
+    const performanceYear = parsed.year + 543;
+    const performanceMonth = parsed.month - 1;
+    const evaluationId = performanceEvaluationId(performanceYear, employeeId, performanceMonth);
+    const incentiveId = `${employeeId}__${parsed.yearMonth}`;
+    const evaluationRef = firestoreApi.doc(db, "evaluations", evaluationId);
+    const incentiveRef = firestoreApi.doc(db, "serviceIncentives", incentiveId);
+    const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+    const expectedEvaluationVersion = Math.max(0, Math.trunc(Number(input.expectedEvaluationVersion) || 0));
+    const expectedIncentiveVersion = Math.max(0, Math.trunc(Number(input.expectedIncentiveVersion) || 0));
+    let calculatedGpa = null;
+    let calculatedAmount = null;
+    try {
+      await firestoreApi.runTransaction(db, async (transaction) => {
+        const [evaluationSnapshot, incentiveSnapshot] = await Promise.all([
+          transaction.get(evaluationRef),
+          transaction.get(incentiveRef),
+        ]);
+        if (!evaluationSnapshot.exists()) throw new Error("ยังไม่มี Performance Summary ของพนักงานและเดือนนี้");
+        const evaluation = evaluationSnapshot.data();
+        const evaluationVersion = Number(evaluation.version) || 0;
+        if (evaluationVersion !== expectedEvaluationVersion) {
+          const conflict = new Error("Performance Summary ถูกแก้ไข กรุณาตรวจสอบใหม่");
+          conflict.code = "VERSION_CONFLICT";
+          throw conflict;
+        }
+        if (evaluation.disciplinePending === true) throw new Error("กรุณากรอกคะแนนการเคารพกฎระเบียบบริษัทให้ครบก่อน");
+        calculatedGpa = calculatePerformanceGpa(evaluation.scores);
+        calculatedAmount = performanceGpaIncentiveAmount(calculatedGpa);
+        if (calculatedAmount === null) throw new Error("GPA ต่ำกว่า 0.50 ไม่มีเกณฑ์เงินประเมิน จึงไม่สามารถส่งอัตโนมัติได้");
+
+        const existing = incentiveSnapshot.exists() ? incentiveSnapshot.data() : null;
+        const currentVersion = Number(existing?.version) || 0;
+        if (currentVersion !== expectedIncentiveVersion) {
+          const conflict = new Error("Service Incentive ถูกแก้ไข กรุณาตรวจสอบใหม่");
+          conflict.code = "VERSION_CONFLICT";
+          throw conflict;
+        }
+        const salesAmount = normalizeMoney(existing?.salesAmount || 0, "ยอดขายของ");
+        const timeAmount = normalizeMoney(existing?.timeAmount || 0, "ยอดเวลา");
+        const evaluationAmount = normalizeMoney(calculatedAmount, "ยอดประเมิน");
+        const totalAmount = normalizeMoney(salesAmount + evaluationAmount + timeAmount, "ยอดรวม");
+        const payload = {
+          employeeId,
+          yearMonth: parsed.yearMonth,
+          year: parsed.year,
+          month: parsed.month,
+          salesAmount,
+          evaluationAmount,
+          timeAmount,
+          totalAmount,
+          source: String(existing?.source || "Employee Hub / GPA Sync"),
+          ...(existing?.sourceRecordId ? { sourceRecordId: existing.sourceRecordId } : {}),
+          ...(existing?.sourceCreatedAt ? { sourceCreatedAt: existing.sourceCreatedAt } : {}),
+          ...(existing?.sourceUpdatedAt ? { sourceUpdatedAt: existing.sourceUpdatedAt } : {}),
+          ...(existing?.importedAt ? { importedAt: existing.importedAt } : {}),
+          version: currentVersion + 1,
+          createdAt: existing?.createdAt || firestoreApi.serverTimestamp(),
+          createdBy: existing?.createdBy || uid,
+          updatedAt: firestoreApi.serverTimestamp(),
+          updatedBy: uid,
+        };
+        transaction.set(incentiveRef, payload);
+        transaction.set(auditRef, {
+          actorId: uid,
+          action: "SYNC_GPA_TO_SERVICE_INCENTIVE",
+          targetType: "serviceIncentive",
+          targetId: incentiveId,
+          before: existing || null,
+          after: { ...payload, createdAt: null, updatedAt: null },
+          createdAt: firestoreApi.serverTimestamp(),
+        });
+      });
+      return {
+        incentive: incentiveFromSnapshot(await firestoreApi.getDoc(incentiveRef)),
+        gpa: calculatedGpa,
+        evaluationAmount: calculatedAmount,
+      };
+    } catch (error) {
+      if (error?.code === "VERSION_CONFLICT") throw error;
+      throw friendlyError(error, "ส่งเงินประเมินไป Service Incentive ไม่สำเร็จ");
+    }
+  }
+
   async function addPerformanceYear(value) {
     assertReady();
     const uid = currentUid();
@@ -1709,6 +1846,8 @@
     savePerformanceEvaluation,
     loadPerformanceScoreSyncSnapshot,
     syncPerformanceEvaluationFromSources,
+    loadPerformanceIncentiveSyncSnapshot,
+    syncPerformanceGpaToServiceIncentive,
     addPerformanceYear,
     loadEmployee360Snapshot,
     getMigrationStatus,

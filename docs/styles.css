@@ -561,3 +561,15 @@ tr:last-child td { border-bottom: 0; }
   .closing-step-card { grid-template-columns:42px 1fr; }
   .closing-step-card .closing-step-action { grid-column:1 / -1; width:100%; }
 }
+
+
+/* Phase 6.1 · GPA Incentive Sync */
+.performance-band-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .55rem;
+  margin: 1rem 0;
+}
+.performance-band-list .badge {
+  white-space: nowrap;
+}
