@@ -197,6 +197,114 @@
     };
   }
 
+  function calculateLateScore(value) {
+    const minutes = Math.max(0, Math.trunc(Number(value) || 0));
+    if (minutes <= 29) return 100;
+    if (minutes <= 59) return 90;
+    if (minutes <= 89) return 80;
+    if (minutes <= 119) return 70;
+    return 60;
+  }
+
+  function normalizeLateMinutes(value) {
+    const minutes = Number(value);
+    if (!Number.isFinite(minutes) || minutes < 0 || minutes > 100000) {
+      throw new Error("นาทีสายต้องเป็นตัวเลขตั้งแต่ 0–100,000");
+    }
+    return Math.trunc(minutes);
+  }
+
+  function normalizeIsoDate(value, label = "วันที่") {
+    const text = String(value || "").trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(text)) throw new Error(`${label} ต้องอยู่ในรูปแบบ YYYY-MM-DD`);
+    const parsed = new Date(`${text}T00:00:00Z`);
+    if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== text) throw new Error(`${label} ไม่ถูกต้อง`);
+    return text;
+  }
+
+  function normalizeLeaveType(value) {
+    const type = String(value || "").trim().toLowerCase();
+    if (!["sick", "personal", "vacation", "ordination", "other"].includes(type)) {
+      throw new Error("ประเภทวันลาไม่ถูกต้อง");
+    }
+    return type;
+  }
+
+  function normalizeLeaveDays(value) {
+    const days = Number(value);
+    if (!Number.isFinite(days) || days <= 0 || days > 365) throw new Error("จำนวนวันลาต้องมากกว่า 0 และไม่เกิน 365 วัน");
+    const rounded = Math.round(days * 2) / 2;
+    if (Math.abs(rounded - days) > 0.0001) throw new Error("จำนวนวันลาต้องเพิ่มทีละ 0.5 วัน");
+    return rounded;
+  }
+
+  function attendanceFromSnapshot(snapshot) {
+    const row = snapshot.data();
+    return {
+      id: snapshot.id,
+      employeeId: String(row.employeeId || ""),
+      yearMonth: String(row.yearMonth || ""),
+      year: Number(row.year),
+      month: Number(row.month),
+      lateMinutes: Number(row.lateMinutes) || 0,
+      lateScore: Number(row.lateScore) || calculateLateScore(row.lateMinutes),
+      version: Number(row.version) || 1,
+      source: String(row.source || "Employee Hub"),
+      sourceRecordId: String(row.sourceRecordId || ""),
+      sourceDate: String(row.sourceDate || ""),
+      updatedAt: toIso(row.updatedAt),
+    };
+  }
+
+  function leaveFromSnapshot(snapshot) {
+    const row = snapshot.data();
+    return {
+      id: snapshot.id,
+      employeeId: String(row.employeeId || ""),
+      date: String(row.date || ""),
+      year: Number(row.year),
+      month: Number(row.month),
+      leaveType: String(row.leaveType || "other"),
+      days: Number(row.days) || 0,
+      note: String(row.note || ""),
+      excludeHolidays: Boolean(row.excludeHolidays),
+      originalLeaveType: String(row.originalLeaveType || ""),
+      migrationAdjustment: String(row.migrationAdjustment || ""),
+      version: Number(row.version) || 1,
+      source: String(row.source || "Employee Hub"),
+      sourceRecordId: String(row.sourceRecordId || ""),
+      updatedAt: toIso(row.updatedAt),
+    };
+  }
+
+  function workdaySettingsFromSnapshot(snapshot) {
+    if (!snapshot.exists()) {
+      return {
+        configured: false,
+        sickAnnualDays: null,
+        personalAnnualDays: null,
+        vacationAfter1Year: null,
+        vacationAfter3Years: null,
+        vacationAfter5Years: null,
+        vacationReference: "jan1",
+        note: "",
+        updatedAt: "",
+      };
+    }
+    const row = snapshot.data();
+    return {
+      configured: row.configured === true,
+      sickAnnualDays: Number.isFinite(Number(row.sickAnnualDays)) ? Number(row.sickAnnualDays) : null,
+      personalAnnualDays: Number.isFinite(Number(row.personalAnnualDays)) ? Number(row.personalAnnualDays) : null,
+      vacationAfter1Year: Number.isFinite(Number(row.vacationAfter1Year)) ? Number(row.vacationAfter1Year) : null,
+      vacationAfter3Years: Number.isFinite(Number(row.vacationAfter3Years)) ? Number(row.vacationAfter3Years) : null,
+      vacationAfter5Years: Number.isFinite(Number(row.vacationAfter5Years)) ? Number(row.vacationAfter5Years) : null,
+      vacationReference: row.vacationReference === "yearEnd" ? "yearEnd" : "jan1",
+      note: String(row.note || ""),
+      updatedAt: toIso(row.updatedAt),
+    };
+  }
+
   async function signIn(email, password) {
     assertReady();
     try {
@@ -306,9 +414,69 @@
         employeeCodeMigrationId: String(row.employeeCodeMigrationId || ""),
         employeeCodeUpdatedAt: toIso(row.employeeCodeUpdatedAt),
         employeeCodeUpdatedBy: String(row.employeeCodeUpdatedBy || ""),
+        workdayMigrationId: String(row.workdayMigrationId || ""),
+        workdayImportedAt: toIso(row.workdayImportedAt),
+        workdayImportedBy: String(row.workdayImportedBy || ""),
+        workdayCounts: row.workdayCounts || {},
+        workdaySourceSummary: row.workdaySourceSummary || {},
       };
     } catch (error) {
       throw friendlyError(error, "อ่านสถานะ Migration ไม่สำเร็จ");
+    }
+  }
+
+  async function loadAttendanceMonthly(yearMonth = "") {
+    assertReady();
+    try {
+      const collectionRef = firestoreApi.collection(db, "attendanceMonthly");
+      const source = yearMonth
+        ? firestoreApi.query(collectionRef, firestoreApi.where("yearMonth", "==", yearMonth))
+        : collectionRef;
+      const snapshots = await firestoreApi.getDocs(source);
+      return snapshots.docs.map(attendanceFromSnapshot).sort((a, b) => {
+        if (a.yearMonth !== b.yearMonth) return b.yearMonth.localeCompare(a.yearMonth);
+        return a.employeeId.localeCompare(b.employeeId);
+      });
+    } catch (error) {
+      throw friendlyError(error, "อ่านข้อมูลเวลาสายไม่สำเร็จ");
+    }
+  }
+
+  async function loadLeaveRecords(year = 0) {
+    assertReady();
+    try {
+      const collectionRef = firestoreApi.collection(db, "leaveRecords");
+      const numericYear = Math.trunc(Number(year) || 0);
+      const source = numericYear
+        ? firestoreApi.query(collectionRef, firestoreApi.where("year", "==", numericYear))
+        : collectionRef;
+      const snapshots = await firestoreApi.getDocs(source);
+      return snapshots.docs.map(leaveFromSnapshot).sort((a, b) => b.date.localeCompare(a.date) || a.employeeId.localeCompare(b.employeeId));
+    } catch (error) {
+      throw friendlyError(error, "อ่านข้อมูลวันลาไม่สำเร็จ");
+    }
+  }
+
+  async function loadWorkdaySettings() {
+    assertReady();
+    try {
+      return workdaySettingsFromSnapshot(await firestoreApi.getDoc(firestoreApi.doc(db, "workdaySettings", "main")));
+    } catch (error) {
+      throw friendlyError(error, "อ่านการตั้งค่าสิทธิ์วันลาไม่สำเร็จ");
+    }
+  }
+
+  async function loadWorkdaySnapshot(yearMonth, year) {
+    assertReady();
+    try {
+      const [attendanceMonthly, leaveRecords, settings] = await Promise.all([
+        loadAttendanceMonthly(yearMonth),
+        loadLeaveRecords(year),
+        loadWorkdaySettings(),
+      ]);
+      return { attendanceMonthly, leaveRecords, settings };
+    } catch (error) {
+      throw friendlyError(error, "โหลดข้อมูล Workday Insight ไม่สำเร็จ");
     }
   }
 
@@ -507,6 +675,239 @@
       });
     } catch (error) {
       throw friendlyError(error, "ลบ Service Incentive ไม่สำเร็จ");
+    }
+  }
+
+  async function saveAttendanceMonthly(input) {
+    assertReady();
+    const uid = currentUid();
+    const employeeId = String(input.employeeId || "");
+    const { yearMonth, year, month } = parseYearMonth(input.yearMonth);
+    const lateMinutes = normalizeLateMinutes(input.lateMinutes);
+    const lateScore = calculateLateScore(lateMinutes);
+    const expectedVersion = Math.max(0, Math.trunc(Number(input.expectedVersion) || 0));
+    const documentId = `${employeeId}__${yearMonth}`;
+    const ref = firestoreApi.doc(db, "attendanceMonthly", documentId);
+    const employeeRef = firestoreApi.doc(db, "employees", employeeId);
+    const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+
+    try {
+      await firestoreApi.runTransaction(db, async (transaction) => {
+        const [employeeSnapshot, existingSnapshot] = await Promise.all([transaction.get(employeeRef), transaction.get(ref)]);
+        if (!employeeSnapshot.exists()) throw new Error("ไม่พบพนักงานที่เลือก");
+        if (employeeSnapshot.data().isActive === false) throw new Error("พนักงานคนนี้ถูกปิดใช้งาน");
+        const existing = existingSnapshot.exists() ? existingSnapshot.data() : null;
+        const currentVersion = Number(existing?.version) || 0;
+        if (currentVersion !== expectedVersion) {
+          const conflict = new Error("VERSION_CONFLICT");
+          conflict.code = "VERSION_CONFLICT";
+          throw conflict;
+        }
+        const payload = {
+          employeeId, yearMonth, year, month, lateMinutes, lateScore,
+          source: String(existing?.source || "Employee Hub / Firebase"),
+          ...(existing?.sourceRecordId ? { sourceRecordId: existing.sourceRecordId } : {}),
+          ...(existing?.sourceDate ? { sourceDate: existing.sourceDate } : {}),
+          ...(existing?.importedAt ? { importedAt: existing.importedAt } : {}),
+          version: currentVersion + 1,
+          createdAt: existing?.createdAt || firestoreApi.serverTimestamp(),
+          createdBy: existing?.createdBy || uid,
+          updatedAt: firestoreApi.serverTimestamp(),
+          updatedBy: uid,
+        };
+        transaction.set(ref, payload);
+        transaction.set(auditRef, {
+          actorId: uid, action: existing ? "UPDATE_ATTENDANCE_MONTHLY" : "CREATE_ATTENDANCE_MONTHLY",
+          targetType: "attendanceMonthly", targetId: documentId, before: existing || null,
+          after: { ...payload, createdAt: null, updatedAt: null }, createdAt: firestoreApi.serverTimestamp(),
+        });
+      });
+      return attendanceFromSnapshot(await firestoreApi.getDoc(ref));
+    } catch (error) {
+      if (error?.code === "VERSION_CONFLICT" || error?.message === "VERSION_CONFLICT") throw error;
+      throw friendlyError(error, "บันทึกเวลาสายไม่สำเร็จ");
+    }
+  }
+
+  async function deleteAttendanceMonthly(documentId) {
+    assertReady();
+    const uid = currentUid();
+    const ref = firestoreApi.doc(db, "attendanceMonthly", String(documentId || ""));
+    const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+    try {
+      await firestoreApi.runTransaction(db, async (transaction) => {
+        const snapshot = await transaction.get(ref);
+        if (!snapshot.exists()) throw new Error("ไม่พบข้อมูลเวลาสายที่ต้องการลบ");
+        transaction.delete(ref);
+        transaction.set(auditRef, { actorId: uid, action: "DELETE_ATTENDANCE_MONTHLY", targetType: "attendanceMonthly", targetId: snapshot.id, before: snapshot.data(), after: null, createdAt: firestoreApi.serverTimestamp() });
+      });
+    } catch (error) {
+      throw friendlyError(error, "ลบข้อมูลเวลาสายไม่สำเร็จ");
+    }
+  }
+
+  async function saveLeaveRecord(input) {
+    assertReady();
+    const uid = currentUid();
+    const id = String(input.id || `leave_${crypto.randomUUID().replaceAll("-", "")}`);
+    const employeeId = String(input.employeeId || "");
+    const date = normalizeIsoDate(input.date, "วันที่ลา");
+    const year = Number(date.slice(0, 4));
+    const month = Number(date.slice(5, 7));
+    const leaveType = normalizeLeaveType(input.leaveType);
+    const days = normalizeLeaveDays(input.days);
+    const note = String(input.note || "").trim();
+    const excludeHolidays = input.excludeHolidays === true;
+    const expectedVersion = Math.max(0, Math.trunc(Number(input.expectedVersion) || 0));
+    if (note.length > 1000) throw new Error("หมายเหตุต้องไม่เกิน 1,000 ตัวอักษร");
+    const ref = firestoreApi.doc(db, "leaveRecords", id);
+    const employeeRef = firestoreApi.doc(db, "employees", employeeId);
+    const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+
+    try {
+      await firestoreApi.runTransaction(db, async (transaction) => {
+        const [employeeSnapshot, existingSnapshot] = await Promise.all([transaction.get(employeeRef), transaction.get(ref)]);
+        if (!employeeSnapshot.exists()) throw new Error("ไม่พบพนักงานที่เลือก");
+        if (employeeSnapshot.data().isActive === false) throw new Error("พนักงานคนนี้ถูกปิดใช้งาน");
+        const existing = existingSnapshot.exists() ? existingSnapshot.data() : null;
+        const currentVersion = Number(existing?.version) || 0;
+        if (currentVersion !== expectedVersion) {
+          const conflict = new Error("VERSION_CONFLICT"); conflict.code = "VERSION_CONFLICT"; throw conflict;
+        }
+        const payload = {
+          employeeId, date, year, month, leaveType, days, note, excludeHolidays,
+          source: String(existing?.source || "Employee Hub / Firebase"),
+          ...(existing?.sourceRecordId ? { sourceRecordId: existing.sourceRecordId } : {}),
+          ...(existing?.originalLeaveType ? { originalLeaveType: existing.originalLeaveType } : {}),
+          ...(existing?.migrationAdjustment ? { migrationAdjustment: existing.migrationAdjustment } : {}),
+          ...(existing?.importedAt ? { importedAt: existing.importedAt } : {}),
+          version: currentVersion + 1,
+          createdAt: existing?.createdAt || firestoreApi.serverTimestamp(),
+          createdBy: existing?.createdBy || uid,
+          updatedAt: firestoreApi.serverTimestamp(),
+          updatedBy: uid,
+        };
+        transaction.set(ref, payload);
+        transaction.set(auditRef, { actorId: uid, action: existing ? "UPDATE_LEAVE_RECORD" : "CREATE_LEAVE_RECORD", targetType: "leaveRecord", targetId: id, before: existing || null, after: { ...payload, createdAt: null, updatedAt: null }, createdAt: firestoreApi.serverTimestamp() });
+      });
+      return leaveFromSnapshot(await firestoreApi.getDoc(ref));
+    } catch (error) {
+      if (error?.code === "VERSION_CONFLICT" || error?.message === "VERSION_CONFLICT") throw error;
+      throw friendlyError(error, "บันทึกวันลาไม่สำเร็จ");
+    }
+  }
+
+  async function deleteLeaveRecord(documentId) {
+    assertReady();
+    const uid = currentUid();
+    const ref = firestoreApi.doc(db, "leaveRecords", String(documentId || ""));
+    const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+    try {
+      await firestoreApi.runTransaction(db, async (transaction) => {
+        const snapshot = await transaction.get(ref);
+        if (!snapshot.exists()) throw new Error("ไม่พบรายการวันที่ต้องการลบ");
+        transaction.delete(ref);
+        transaction.set(auditRef, { actorId: uid, action: "DELETE_LEAVE_RECORD", targetType: "leaveRecord", targetId: snapshot.id, before: snapshot.data(), after: null, createdAt: firestoreApi.serverTimestamp() });
+      });
+    } catch (error) {
+      throw friendlyError(error, "ลบวันลาไม่สำเร็จ");
+    }
+  }
+
+  function normalizePolicyNumber(value, label) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 0 || numeric > 365) throw new Error(`${label} ต้องอยู่ระหว่าง 0–365 วัน`);
+    return Math.round(numeric * 2) / 2;
+  }
+
+  async function saveWorkdaySettings(input) {
+    assertReady();
+    const uid = currentUid();
+    const ref = firestoreApi.doc(db, "workdaySettings", "main");
+    const payload = {
+      configured: true,
+      sickAnnualDays: normalizePolicyNumber(input.sickAnnualDays, "สิทธิลาป่วย"),
+      personalAnnualDays: normalizePolicyNumber(input.personalAnnualDays, "สิทธิลากิจ"),
+      vacationAfter1Year: normalizePolicyNumber(input.vacationAfter1Year, "พักร้อนหลัง 1 ปี"),
+      vacationAfter3Years: normalizePolicyNumber(input.vacationAfter3Years, "พักร้อนหลัง 3 ปี"),
+      vacationAfter5Years: normalizePolicyNumber(input.vacationAfter5Years, "พักร้อนหลัง 5 ปี"),
+      vacationReference: input.vacationReference === "yearEnd" ? "yearEnd" : "jan1",
+      note: String(input.note || "").trim().slice(0, 1000),
+      updatedAt: firestoreApi.serverTimestamp(),
+      updatedBy: uid,
+    };
+    try {
+      await firestoreApi.setDoc(ref, payload);
+      await firestoreApi.addDoc(firestoreApi.collection(db, "auditLogs"), { actorId: uid, action: "UPDATE_WORKDAY_SETTINGS", targetType: "workdaySettings", targetId: "main", before: null, after: { ...payload, updatedAt: null }, createdAt: firestoreApi.serverTimestamp() });
+      return workdaySettingsFromSnapshot(await firestoreApi.getDoc(ref));
+    } catch (error) {
+      throw friendlyError(error, "บันทึกการตั้งค่าสิทธิ์วันลาไม่สำเร็จ");
+    }
+  }
+
+  async function importWorkdayPhase2Seed(seed) {
+    assertReady();
+    const uid = currentUid();
+    if (!seed || Number(seed.schemaVersion) !== 2 || seed.migrationType !== "employee-hub-workday-phase-2") throw new Error("Workday Phase 2 Seed ไม่ถูกต้องหรือไม่รองรับ");
+    if (!Array.isArray(seed.attendanceMonthly) || !Array.isArray(seed.leaveRecords)) throw new Error("Workday Phase 2 Seed มีข้อมูลไม่ครบ");
+
+    try {
+      const employeeSnapshots = await firestoreApi.getDocs(firestoreApi.collection(db, "employees"));
+      const employeeIds = new Set(employeeSnapshots.docs.map((snapshot) => snapshot.id));
+      const operations = [];
+
+      seed.attendanceMonthly.forEach((record) => {
+        const employeeId = String(record.employeeId || "");
+        if (!employeeIds.has(employeeId)) throw new Error(`ไม่พบ Employee Master: ${employeeId}`);
+        const { yearMonth, year, month } = parseYearMonth(record.yearMonth);
+        const lateMinutes = normalizeLateMinutes(record.lateMinutes);
+        const id = String(record.id || `${employeeId}__${yearMonth}`);
+        operations.push({ type: "set", ref: firestoreApi.doc(db, "attendanceMonthly", id), data: {
+          employeeId, yearMonth, year, month, lateMinutes, lateScore: calculateLateScore(lateMinutes),
+          source: String(record.source || "Workday Insight.xlsx").slice(0, 160),
+          sourceRecordId: String(record.sourceRecordId || "").slice(0, 160),
+          sourceDate: String(record.sourceDate || "").slice(0, 10),
+          version: Math.max(1, Math.trunc(Number(record.version) || 1)),
+          createdAt: firestoreApi.serverTimestamp(), createdBy: uid, updatedAt: firestoreApi.serverTimestamp(), updatedBy: uid, importedAt: firestoreApi.serverTimestamp(),
+        }});
+      });
+
+      seed.leaveRecords.forEach((record) => {
+        const employeeId = String(record.employeeId || "");
+        if (!employeeIds.has(employeeId)) throw new Error(`ไม่พบ Employee Master: ${employeeId}`);
+        const date = normalizeIsoDate(record.date, "วันที่ลา");
+        const id = String(record.id || `leave_${crypto.randomUUID().replaceAll("-", "")}`);
+        const payload = {
+          employeeId, date, year: Number(date.slice(0, 4)), month: Number(date.slice(5, 7)),
+          leaveType: normalizeLeaveType(record.leaveType), days: normalizeLeaveDays(record.days),
+          note: String(record.note || "").slice(0, 1000), excludeHolidays: record.excludeHolidays === true,
+          source: String(record.source || "Workday Insight.xlsx").slice(0, 160),
+          sourceRecordId: String(record.sourceRecordId || "").slice(0, 160),
+          version: Math.max(1, Math.trunc(Number(record.version) || 1)),
+          createdAt: firestoreApi.serverTimestamp(), createdBy: uid, updatedAt: firestoreApi.serverTimestamp(), updatedBy: uid, importedAt: firestoreApi.serverTimestamp(),
+        };
+        if (record.originalLeaveType) payload.originalLeaveType = String(record.originalLeaveType).slice(0, 40);
+        if (record.migrationAdjustment) payload.migrationAdjustment = String(record.migrationAdjustment).slice(0, 500);
+        operations.push({ type: "set", ref: firestoreApi.doc(db, "leaveRecords", id), data: payload });
+      });
+
+      operations.push({ type: "set", ref: firestoreApi.doc(db, "hubSettings", "main"), data: {
+        schemaVersion: 2, workdayMigrationId: String(seed.migrationId || "employee-hub-phase-2-workday"),
+        workdayImportedAt: firestoreApi.serverTimestamp(), workdayImportedBy: uid,
+        workdayCounts: seed.counts || {}, workdaySourceSummary: seed.summaries || {},
+        updatedAt: firestoreApi.serverTimestamp(), updatedBy: uid,
+      }, options: { merge: true } });
+      operations.push({ type: "set", ref: firestoreApi.doc(firestoreApi.collection(db, "auditLogs")), data: {
+        actorId: uid, action: "IMPORT_EMPLOYEE_HUB_PHASE_2", targetType: "database",
+        targetId: String(seed.migrationId || "employee-hub-phase-2-workday"), before: null,
+        after: { counts: seed.counts || {}, excludedSourceRecords: seed.excludedSourceRecords?.length || 0 },
+        createdAt: firestoreApi.serverTimestamp(),
+      }});
+
+      await commitOperations(operations);
+      return { attendanceCount: seed.attendanceMonthly.length, leaveCount: seed.leaveRecords.length, excludedCount: seed.excludedSourceRecords?.length || 0 };
+    } catch (error) {
+      throw friendlyError(error, "นำเข้า Workday Phase 2 ไม่สำเร็จ");
     }
   }
 
@@ -745,11 +1146,21 @@
     loadEvaluationSummary,
     getMigrationStatus,
     loadHubSnapshot,
+    loadAttendanceMonthly,
+    loadLeaveRecords,
+    loadWorkdaySettings,
+    loadWorkdaySnapshot,
     saveEmployee,
     saveServiceIncentive,
     deleteServiceIncentive,
+    saveAttendanceMonthly,
+    deleteAttendanceMonthly,
+    saveLeaveRecord,
+    deleteLeaveRecord,
+    saveWorkdaySettings,
     reorderEmployeeCodesByStartDate,
     importMigrationSeed,
+    importWorkdayPhase2Seed,
   });
 
   global.EmployeeHubDatabase = api;
