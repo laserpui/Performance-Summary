@@ -2,9 +2,9 @@
 
 const APP_RELEASE = Object.freeze({
   product: "Employee Management Hub",
-  version: "1.0.0",
-  phase: "Phase 10",
-  releaseName: "Production Final Release",
+  version: "1.0.1",
+  phase: "Final UI Refresh",
+  releaseName: "Modern Workspace Release",
   releasedAt: "2026-07-23",
 });
 
@@ -28,6 +28,20 @@ const VIEW_TITLES = Object.freeze({
   monthly: "Monthly Performance",
   closing: "ศูนย์ปิดรอบเดือน",
   system: "ระบบและสำรองข้อมูล",
+});
+
+const VIEW_DESCRIPTIONS = Object.freeze({
+  monthly: "บันทึก ตรวจสอบ และปิดคะแนนผลงานประจำวันของพนักงาน",
+  workday: "จัดการเวลาสาย วันลา และคะแนนความตรงต่อเวลาประจำเดือน",
+  service: "สรุปยอดขาย เงินประเมิน เวลา และ Service Incentive ประจำเดือน",
+  performance: "รวมคะแนน KPI คำนวณ GPA เชื่อมข้อมูล และดูรายงานพนักงาน 360°",
+  closing: "ตรวจความครบถ้วน รับรอง และล็อกข้อมูลก่อนสรุปรอบประจำเดือน",
+  employees: "จัดการ Employee Master รหัสพนักงาน วันที่เริ่มงาน และสถานะใช้งาน",
+  audit: "ค้นประวัติการเปลี่ยนแปลง พร้อมเปรียบเทียบค่าเดิมและค่าใหม่",
+  system: "ตรวจสุขภาพระบบ สำรองข้อมูล และจัดการสถานะ Production Release",
+  dashboard: "ภาพรวมสถานะและข้อมูลสำคัญจากทุกโมดูล",
+  executive: "KPI ผู้บริหาร แนวโน้ม และรายการที่ต้องติดตามในหน้าเดียว",
+  annual: "สรุป GPA, Service Incentive, เวลาสาย และวันลาตลอดทั้งปี",
 });
 
 const MONTHLY_ALL_EMPLOYEES_ID = "__ALL_ACTIVE_EMPLOYEES__";
@@ -95,7 +109,7 @@ const PERFORMANCE_LEGACY_ANNUAL_SCORES = Object.freeze({
 const state = {
   user: null,
   profile: null,
-  currentView: "dashboard",
+  currentView: "monthly",
   loading: false,
   employees: [],
   incentives: [],
@@ -185,7 +199,7 @@ const els = {};
 function cacheElements() {
   [
     "authGate", "authMessage", "loginForm", "loginEmail", "loginPassword", "loginButton", "authConfigHelp",
-    "appShell", "mobileNav", "pageTitle", "databaseStatusDot", "databaseStatusLabel", "accountName", "accountRole",
+    "appShell", "mobileNav", "pageTitle", "pageDescription", "databaseStatusDot", "databaseStatusLabel", "accountName", "accountRole",
     "logoutButton", "refreshButton", "syncBadge", "dashboardView", "executiveView", "annualView", "auditView", "employeesView", "serviceView", "performanceView",
     "workdayView", "monthlyView", "closingView", "systemView", "modalRoot", "toastRegion",
   ].forEach((id) => { els[id] = document.getElementById(id); });
@@ -311,6 +325,7 @@ function showView(viewName) {
   if (!VIEW_TITLES[viewName]) return;
   state.currentView = viewName;
   els.pageTitle.textContent = VIEW_TITLES[viewName];
+  if (els.pageDescription) els.pageDescription.textContent = VIEW_DESCRIPTIONS[viewName] || "ระบบบริหารข้อมูลพนักงานแบบรวมศูนย์";
   document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
   document.getElementById(`${viewName}View`)?.classList.add("active");
   document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === viewName));
@@ -4321,7 +4336,7 @@ function renderSystem() {
         </div>
         <div class="release-actions">
           <div><strong>${release.ready ? "พร้อมรับรอง Production" : `เหลือ ${release.automatedRows.filter((item) => !item.done).length + release.manualRows.filter((item) => !item.done).length} รายการ`}</strong><br><small>รายงานตรวจรับไม่มีรหัสผ่านหรือ Service Account แต่มีข้อมูลสรุปภายในบริษัท</small></div>
-          <div class="panel-actions"><button id="downloadReleaseReport" class="button button-secondary" type="button"><i data-lucide="file-down"></i>ดาวน์โหลดรายงาน</button><button id="acceptProductionRelease" class="button button-primary" type="button" ${release.ready && !state.releaseSaving ? "" : "disabled"}><i data-lucide="badge-check"></i>${state.releaseSaving ? "กำลังรับรอง..." : accepted ? "รับรอง Production ซ้ำ" : "รับรอง Production 1.0"}</button></div>
+          <div class="panel-actions"><button id="downloadReleaseReport" class="button button-secondary" type="button"><i data-lucide="file-down"></i>ดาวน์โหลดรายงาน</button><button id="acceptProductionRelease" class="button button-primary" type="button" ${release.ready && !state.releaseSaving ? "" : "disabled"}><i data-lucide="badge-check"></i>${state.releaseSaving ? "กำลังรับรอง..." : accepted ? "รับรอง Production ซ้ำ" : "รับรอง Production v${APP_RELEASE.version}"}</button></div>
         </div>
       </article>
     </div>`;
@@ -4366,7 +4381,7 @@ async function initializeAuthenticatedApp() {
   setSyncStatus("syncing", "กำลังโหลดข้อมูล");
   await refreshData();
   const hashView = window.location.hash.replace("#", "");
-  showView(VIEW_TITLES[hashView] ? hashView : "dashboard");
+  showView(VIEW_TITLES[hashView] ? hashView : "monthly");
 }
 
 function bindGlobalEvents() {
@@ -4395,7 +4410,10 @@ function bindGlobalEvents() {
   });
   document.addEventListener("click", (event) => {
     const nav = event.target.closest("[data-view]");
-    if (nav) showView(nav.dataset.view);
+    if (nav) {
+      showView(nav.dataset.view);
+      nav.closest("details")?.removeAttribute("open");
+    }
   });
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && els.modalRoot.innerHTML) els.modalRoot.innerHTML = "";

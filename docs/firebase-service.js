@@ -1635,7 +1635,7 @@
     assertReady();
     const uid = currentUid();
     const releaseVersion = String(input.releaseVersion || "").trim();
-    if (releaseVersion !== "1.0.0") throw new Error("รองรับการรับรอง Production v1.0.0 เท่านั้น");
+    if (releaseVersion !== "1.0.1") throw new Error("รองรับการรับรอง Production v1.0.1 เท่านั้น");
 
     const requiredManualKeys = ["workflow", "exports", "responsive", "backupStored", "legacyReadOnly"];
     const manualChecks = Object.fromEntries(requiredManualKeys.map((key) => [key, input.manualChecks?.[key] === true]));
