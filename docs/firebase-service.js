@@ -1975,6 +1975,48 @@
     }
   }
 
+
+  function auditLogFromSnapshot(document) {
+    const data = document.data() || {};
+    return {
+      id: document.id,
+      actorId: String(data.actorId || ""),
+      action: String(data.action || ""),
+      targetType: String(data.targetType || ""),
+      targetId: String(data.targetId || ""),
+      before: serializeBackupValue(data.before ?? null),
+      after: serializeBackupValue(data.after ?? null),
+      createdAt: toIso(data.createdAt),
+    };
+  }
+
+  async function loadAuditLogs({ limitCount = 300 } = {}) {
+    assertReady();
+    const safeLimit = Math.max(50, Math.min(1000, Math.trunc(Number(limitCount) || 300)));
+    try {
+      const logsQuery = firestoreApi.query(
+        firestoreApi.collection(db, "auditLogs"),
+        firestoreApi.orderBy("createdAt", "desc"),
+        firestoreApi.limit(safeLimit)
+      );
+      const snapshot = await firestoreApi.getDocs(logsQuery);
+      return snapshot.docs.map(auditLogFromSnapshot);
+    } catch (error) {
+      if (String(error?.code || "") === "failed-precondition") {
+        try {
+          const snapshot = await firestoreApi.getDocs(firestoreApi.collection(db, "auditLogs"));
+          return snapshot.docs
+            .map(auditLogFromSnapshot)
+            .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
+            .slice(0, safeLimit);
+        } catch (fallbackError) {
+          throw friendlyError(fallbackError, "โหลดประวัติการเปลี่ยนแปลงไม่สำเร็จ");
+        }
+      }
+      throw friendlyError(error, "โหลดประวัติการเปลี่ยนแปลงไม่สำเร็จ");
+    }
+  }
+
   function serializeBackupValue(value) {
     if (value == null) return value;
     if (typeof value?.toDate === "function") {
@@ -2077,6 +2119,7 @@
     saveMonthlyPerformanceOverride,
     deleteMonthlyPerformanceOverride,
     setMonthlyPerformanceMonthStatus,
+    loadAuditLogs,
     loadSystemSnapshot,
     createSystemBackup,
   });

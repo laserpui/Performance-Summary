@@ -4,6 +4,7 @@ const VIEW_TITLES = Object.freeze({
   dashboard: "ภาพรวมระบบ",
   executive: "Executive Dashboard",
   annual: "รายงานประจำปี",
+  audit: "ประวัติและตรวจสอบ",
   employees: "ฐานข้อมูลพนักงานกลาง",
   service: "Service Incentive",
   performance: "Performance Summary",
@@ -141,6 +142,15 @@ const state = {
   annualData: null,
   annualDataKey: "",
   annualLoading: false,
+  auditLogs: [],
+  auditLoaded: false,
+  auditLoading: false,
+  auditLimit: 300,
+  auditQuery: "",
+  auditModule: "all",
+  auditAction: "all",
+  auditDateFrom: "",
+  auditDateTo: "",
   closingMonth: currentYearMonth(),
   closingData: null,
   closingDataKey: "",
@@ -157,7 +167,7 @@ function cacheElements() {
   [
     "authGate", "authMessage", "loginForm", "loginEmail", "loginPassword", "loginButton", "authConfigHelp",
     "appShell", "mobileNav", "pageTitle", "databaseStatusDot", "databaseStatusLabel", "accountName", "accountRole",
-    "logoutButton", "refreshButton", "syncBadge", "dashboardView", "executiveView", "annualView", "employeesView", "serviceView", "performanceView",
+    "logoutButton", "refreshButton", "syncBadge", "dashboardView", "executiveView", "annualView", "auditView", "employeesView", "serviceView", "performanceView",
     "workdayView", "monthlyView", "closingView", "systemView", "modalRoot", "toastRegion",
   ].forEach((id) => { els[id] = document.getElementById(id); });
 }
@@ -289,6 +299,7 @@ function showView(viewName) {
   renderCurrentView();
   if (viewName === "executive") void refreshExecutiveData({ force: true, quiet: true });
   if (viewName === "annual") void refreshAnnualData({ force: true, quiet: true });
+  if (viewName === "audit") void refreshAuditData({ quiet: true });
   if (viewName === "performance") void refreshPerformanceData().then(() => {
     if (state.performanceTab === "sync" && !isLegacyAnnualPerformanceYear()) void refreshPerformanceSyncData();
     if (state.performanceTab === "incentive" && !isLegacyAnnualPerformanceYear()) void refreshPerformanceIncentiveData();
@@ -336,6 +347,7 @@ function renderCurrentView() {
     dashboard: renderDashboard,
     executive: renderExecutive,
     annual: renderAnnualReport,
+    audit: renderAuditCenter,
     employees: renderEmployees,
     service: renderService,
     performance: renderPerformance,
@@ -397,6 +409,7 @@ function renderDashboard() {
       <div class="module-grid">
         ${moduleCard({ icon: "chart-spline", title: "Executive Dashboard", description: "KPI ผู้บริหาร แนวโน้ม รายการติดตาม และความเสี่ยงในหน้าเดียว", status: "พร้อมใช้งาน", statusClass: "badge-ready", view: "executive" })}
         ${moduleCard({ icon: "calendar-range", title: "รายงานประจำปี", description: "สรุป GPA เงินพิเศษ เวลาสาย วันลา และอันดับตลอดทั้งปี", status: "พร้อมใช้งาน", statusClass: "badge-ready", view: "annual" })}
+        ${moduleCard({ icon: "history", title: "ประวัติและตรวจสอบ", description: "ค้นการแก้ไขย้อนหลัง ดูค่าเดิม–ค่าใหม่ และ Export Audit Log", status: "พร้อมใช้งาน", statusClass: "badge-ready", view: "audit" })}
         ${moduleCard({ icon: "users-round", title: "Employee Master", description: "รายชื่อ รหัสพนักงาน วันที่เริ่มงาน และ Legacy IDs", status: state.employees.length ? "เชื่อมต่อแล้ว" : "ยังไม่มีข้อมูล", statusClass: state.employees.length ? "badge-ready" : "badge-progress", view: "employees" })}
         ${moduleCard({ icon: "badge-dollar-sign", title: "Service Incentive", description: "บันทึกยอดขาย ประเมิน เวลา และยอดรวมรายเดือน", status: state.incentives.length ? "ใช้งานได้" : "ยังไม่มีข้อมูล", statusClass: state.incentives.length ? "badge-ready" : "badge-progress", view: "service" })}
         ${moduleCard({ icon: "chart-no-axes-combined", title: "Performance Summary", description: "บันทึกคะแนน KPI ประวัติ รายงาน และ Employee 360° ใน Web เดียว", status: "ใช้งานได้", statusClass: "badge-ready", view: "performance" })}
@@ -3712,6 +3725,353 @@ function buildSystemHealth(snapshot) {
   };
 }
 
+
+/* Phase 9 · Audit & Change History */
+const AUDIT_MODULE_DEFINITIONS = Object.freeze({
+  employees: { label: "พนักงาน", icon: "users-round", route: "employees" },
+  service: { label: "Service Incentive", icon: "badge-dollar-sign", route: "service" },
+  performance: { label: "Performance Summary", icon: "chart-no-axes-combined", route: "performance" },
+  workday: { label: "Workday Insight", icon: "calendar-clock", route: "workday" },
+  monthly: { label: "Monthly Performance", icon: "clipboard-check", route: "monthly" },
+  closing: { label: "ปิดรอบเดือน", icon: "calendar-check-2", route: "closing" },
+  system: { label: "ระบบ", icon: "shield-check", route: "system" },
+});
+
+function auditModuleKey(log) {
+  const type = String(log?.targetType || "");
+  if (type === "employee") return "employees";
+  if (type === "serviceIncentive") return "service";
+  if (type === "evaluation") return "performance";
+  if (["attendanceMonthly", "leaveRecord", "workdaySettings"].includes(type)) return "workday";
+  if (["dailyPerformanceEntry", "monthlyPerformanceOverride", "monthlyPerformanceStatus"].includes(type)) return "monthly";
+  if (type === "monthClosure") return "closing";
+  return "system";
+}
+
+function auditActionGroup(action) {
+  const value = String(action || "").toUpperCase();
+  if (value.startsWith("CREATE_")) return "create";
+  if (value.startsWith("UPDATE_")) return "update";
+  if (value.startsWith("DELETE_")) return "delete";
+  if (value.startsWith("SYNC_")) return "sync";
+  if (value.startsWith("FINALIZE_") || value.startsWith("REOPEN_")) return "closure";
+  if (value.includes("STATUS")) return "status";
+  return "other";
+}
+
+function auditActionLabel(action) {
+  const labels = {
+    CREATE_EMPLOYEE: "เพิ่มพนักงาน",
+    UPDATE_EMPLOYEE: "แก้ไขพนักงาน",
+    CREATE_SERVICE_INCENTIVE: "เพิ่ม Service Incentive",
+    UPDATE_SERVICE_INCENTIVE: "แก้ไข Service Incentive",
+    DELETE_SERVICE_INCENTIVE: "ลบ Service Incentive",
+    CREATE_EVALUATION: "เพิ่มผลประเมิน",
+    UPDATE_EVALUATION: "แก้ไขผลประเมิน",
+    SYNC_MONTHLY_TO_PERFORMANCE_SUMMARY: "Sync คะแนนไป Performance Summary",
+    SYNC_GPA_TO_SERVICE_INCENTIVE: "Sync GPA ไป Service Incentive",
+    CREATE_ATTENDANCE_MONTHLY: "เพิ่มข้อมูลเวลาสาย",
+    UPDATE_ATTENDANCE_MONTHLY: "แก้ไขข้อมูลเวลาสาย",
+    DELETE_ATTENDANCE_MONTHLY: "ลบข้อมูลเวลาสาย",
+    CREATE_LEAVE_RECORD: "เพิ่มรายการลา",
+    UPDATE_LEAVE_RECORD: "แก้ไขรายการลา",
+    DELETE_LEAVE_RECORD: "ลบรายการลา",
+    UPDATE_WORKDAY_SETTINGS: "แก้ไขสิทธิ์วันลา",
+    CREATE_DAILY_PERFORMANCE: "เพิ่มคะแนนรายวัน",
+    UPDATE_DAILY_PERFORMANCE: "แก้ไขคะแนนรายวัน",
+    DELETE_DAILY_PERFORMANCE: "ลบคะแนนรายวัน",
+    CREATE_MONTHLY_OVERRIDE: "เพิ่มคะแนนปรับรายเดือน",
+    UPDATE_MONTHLY_OVERRIDE: "แก้ไขคะแนนปรับรายเดือน",
+    DELETE_MONTHLY_OVERRIDE: "ลบคะแนนปรับรายเดือน",
+    MONTHLY_PERFORMANCE_STATUS: "เปลี่ยนสถานะ Monthly Performance",
+    FINALIZE_MONTH_CLOSURE: "รับรองและล็อกรอบเดือน",
+    REOPEN_MONTH_CLOSURE: "เปิดรอบกลับมาแก้ไข",
+  };
+  const value = String(action || "").toUpperCase();
+  if (labels[value]) return labels[value];
+  if (value.startsWith("CREATE_")) return `เพิ่ม ${value.slice(7).replaceAll("_", " ")}`;
+  if (value.startsWith("UPDATE_")) return `แก้ไข ${value.slice(7).replaceAll("_", " ")}`;
+  if (value.startsWith("DELETE_")) return `ลบ ${value.slice(7).replaceAll("_", " ")}`;
+  if (value.startsWith("SYNC_")) return `เชื่อมข้อมูล ${value.slice(5).replaceAll("_", " ")}`;
+  return value.replaceAll("_", " ") || "ไม่ระบุการดำเนินการ";
+}
+
+function auditActionBadge(group) {
+  const map = {
+    create: ["เพิ่ม", "audit-badge-create"],
+    update: ["แก้ไข", "audit-badge-update"],
+    delete: ["ลบ", "audit-badge-delete"],
+    sync: ["Sync", "audit-badge-sync"],
+    closure: ["ปิดรอบ", "audit-badge-closure"],
+    status: ["สถานะ", "audit-badge-status"],
+    other: ["อื่นๆ", "audit-badge-other"],
+  };
+  const [label, className] = map[group] || map.other;
+  return `<span class="audit-action-badge ${className}">${label}</span>`;
+}
+
+function auditSourceRecord(log) {
+  return (log?.after && typeof log.after === "object" ? log.after : null)
+    || (log?.before && typeof log.before === "object" ? log.before : null)
+    || {};
+}
+
+function auditEmployeeForLog(log) {
+  const source = auditSourceRecord(log);
+  let employeeId = String(source.employeeId || "");
+  if (!employeeId && log.targetType === "employee") employeeId = String(log.targetId || "");
+  if (!employeeId) {
+    const target = String(log.targetId || "");
+    employeeId = state.employees.find((employee) => target === employee.id || target.startsWith(`${employee.id}__`) || target.startsWith(`${employee.id}_`))?.id || "";
+  }
+  return state.employees.find((employee) => employee.id === employeeId) || null;
+}
+
+function auditContextLabel(log) {
+  const source = auditSourceRecord(log);
+  if (source.yearMonth) return String(source.yearMonth);
+  if (source.date) return String(source.date).slice(0, 10);
+  if (Number.isFinite(Number(source.year)) && Number.isFinite(Number(source.month))) {
+    const month = Number(source.month);
+    if (month >= 0 && month <= 11) return `${PERFORMANCE_SHORT_MONTHS[month]} ${source.year}`;
+  }
+  const match = String(log.targetId || "").match(/(20\d{2}-\d{2}(?:-\d{2})?)/);
+  return match ? match[1] : "";
+}
+
+function auditTargetLabel(log) {
+  const employee = auditEmployeeForLog(log);
+  const context = auditContextLabel(log);
+  const parts = [];
+  if (employee) parts.push(`${employee.employeeCode} · ${employee.fullName}`);
+  if (context) parts.push(context);
+  if (!parts.length) parts.push(String(log.targetId || "-") || "-");
+  return parts.join(" · ");
+}
+
+function auditActorLabel(log) {
+  if (String(log.actorId || "") === String(state.user?.uid || "")) return state.profile?.displayName || state.user?.email || "ผู้ดูแลระบบ";
+  const value = String(log.actorId || "");
+  return value ? `UID ${value.slice(0, 8)}…` : "ไม่ระบุ";
+}
+
+function auditDateInLocalInput(value) {
+  const date = new Date(value || "");
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
+}
+
+function filteredAuditLogs() {
+  const query = String(state.auditQuery || "").normalize("NFC").trim().toLocaleLowerCase("th");
+  return state.auditLogs.filter((log) => {
+    const moduleKey = auditModuleKey(log);
+    const actionGroup = auditActionGroup(log.action);
+    if (state.auditModule !== "all" && moduleKey !== state.auditModule) return false;
+    if (state.auditAction !== "all" && actionGroup !== state.auditAction) return false;
+    const localDate = auditDateInLocalInput(log.createdAt);
+    if (state.auditDateFrom && localDate && localDate < state.auditDateFrom) return false;
+    if (state.auditDateTo && localDate && localDate > state.auditDateTo) return false;
+    if (!query) return true;
+    const employee = auditEmployeeForLog(log);
+    const text = [
+      log.action, auditActionLabel(log.action), log.targetType, log.targetId,
+      AUDIT_MODULE_DEFINITIONS[moduleKey]?.label, auditContextLabel(log),
+      employee?.employeeCode, employee?.fullName, auditActorLabel(log),
+    ].filter(Boolean).join(" ").normalize("NFC").toLocaleLowerCase("th");
+    return text.includes(query);
+  });
+}
+
+async function refreshAuditData({ force = false, quiet = false } = {}) {
+  if (!state.user || state.auditLoading) return;
+  if (!force && state.auditLoaded) return;
+  state.auditLoading = true;
+  if (!quiet) setSyncStatus("syncing", "กำลังโหลดประวัติการเปลี่ยนแปลง");
+  if (state.currentView === "audit") renderAuditCenter();
+  try {
+    state.auditLogs = await window.EmployeeHubDatabase.loadAuditLogs({ limitCount: state.auditLimit });
+    state.auditLoaded = true;
+    setSyncStatus("online", "เชื่อมต่อแล้ว");
+    if (!quiet) showToast(`โหลดประวัติแล้ว ${state.auditLogs.length} รายการ`);
+  } catch (error) {
+    console.error(error);
+    setSyncStatus("error", "โหลดประวัติไม่สำเร็จ");
+    if (!quiet) showToast(error.message || "โหลดประวัติไม่สำเร็จ", "error", 6500);
+  } finally {
+    state.auditLoading = false;
+    if (state.currentView === "audit") renderAuditCenter();
+  }
+}
+
+function auditSummary() {
+  const logs = filteredAuditLogs();
+  const today = auditDateInLocalInput(new Date().toISOString());
+  return {
+    logs,
+    loaded: state.auditLogs.length,
+    filtered: logs.length,
+    today: state.auditLogs.filter((log) => auditDateInLocalInput(log.createdAt) === today).length,
+    closures: state.auditLogs.filter((log) => auditActionGroup(log.action) === "closure").length,
+    destructive: state.auditLogs.filter((log) => auditActionGroup(log.action) === "delete" || String(log.action || "").startsWith("REOPEN_")).length,
+  };
+}
+
+function auditModuleOptions() {
+  return [`<option value="all" ${state.auditModule === "all" ? "selected" : ""}>ทุกโมดูล</option>`, ...Object.entries(AUDIT_MODULE_DEFINITIONS).map(([key, item]) => `<option value="${key}" ${state.auditModule === key ? "selected" : ""}>${escapeHtml(item.label)}</option>`)].join("");
+}
+
+function auditActionOptions() {
+  const rows = [
+    ["all", "ทุกการดำเนินการ"], ["create", "เพิ่มข้อมูล"], ["update", "แก้ไขข้อมูล"],
+    ["delete", "ลบข้อมูล"], ["sync", "เชื่อมข้อมูล"], ["closure", "รับรอง/เปิดรอบ"],
+    ["status", "เปลี่ยนสถานะ"], ["other", "อื่นๆ"],
+  ];
+  return rows.map(([value, label]) => `<option value="${value}" ${state.auditAction === value ? "selected" : ""}>${label}</option>`).join("");
+}
+
+function auditDisplayValue(value) {
+  if (value == null) return "-";
+  if (typeof value === "object" && value.__type === "timestamp") return formatDate(value.value);
+  if (typeof value === "object" && value.__type === "reference") return String(value.value || "-");
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "object") {
+    try { return JSON.stringify(value); } catch (_) { return String(value); }
+  }
+  return String(value);
+}
+
+function auditFlatten(value, prefix = "", output = {}, depth = 0) {
+  if (value == null || typeof value !== "object" || value.__type || Array.isArray(value) || depth >= 3) {
+    output[prefix || "value"] = value;
+    return output;
+  }
+  const entries = Object.entries(value);
+  if (!entries.length) output[prefix || "value"] = value;
+  entries.forEach(([key, item]) => auditFlatten(item, prefix ? `${prefix}.${key}` : key, output, depth + 1));
+  return output;
+}
+
+function auditDiffRows(log) {
+  const before = auditFlatten(log.before ?? null);
+  const after = auditFlatten(log.after ?? null);
+  const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort((a, b) => a.localeCompare(b));
+  return keys.filter((key) => auditDisplayValue(before[key]) !== auditDisplayValue(after[key])).map((key) => ({
+    key,
+    before: auditDisplayValue(before[key]),
+    after: auditDisplayValue(after[key]),
+  }));
+}
+
+function openAuditDetail(logId) {
+  const log = state.auditLogs.find((item) => item.id === logId);
+  if (!log) return;
+  const moduleKey = auditModuleKey(log);
+  const moduleInfo = AUDIT_MODULE_DEFINITIONS[moduleKey] || AUDIT_MODULE_DEFINITIONS.system;
+  const diffs = auditDiffRows(log);
+  els.modalRoot.innerHTML = `
+    <div class="modal-backdrop" role="presentation">
+      <section class="modal-card modal-wide audit-detail-modal" role="dialog" aria-modal="true" aria-labelledby="auditDetailTitle">
+        <div class="modal-head"><div><p class="eyebrow">IMMUTABLE AUDIT TRAIL</p><h2 id="auditDetailTitle">${escapeHtml(auditActionLabel(log.action))}</h2></div><button id="closeModalButton" class="icon-button" type="button" aria-label="ปิด"><i data-lucide="x"></i></button></div>
+        <div class="audit-detail-meta">
+          <div><span>วันเวลา</span><strong>${escapeHtml(formatDate(log.createdAt))}</strong></div>
+          <div><span>ผู้ดำเนินการ</span><strong>${escapeHtml(auditActorLabel(log))}</strong></div>
+          <div><span>โมดูล</span><strong>${escapeHtml(moduleInfo.label)}</strong></div>
+          <div><span>เป้าหมาย</span><strong>${escapeHtml(auditTargetLabel(log))}</strong></div>
+        </div>
+        <div class="notice notice-info"><i data-lucide="shield-check"></i><div><strong>Audit Log แก้ไขหรือลบไม่ได้</strong><br><code>${escapeHtml(log.targetType)}</code> · <code>${escapeHtml(log.targetId)}</code></div></div>
+        <div class="panel-head audit-diff-head"><div><h3>ค่าเดิมและค่าใหม่</h3><p>แสดงเฉพาะช่องที่มีการเปลี่ยนแปลง</p></div><span class="badge badge-ready">${diffs.length} รายการ</span></div>
+        ${diffs.length ? `<div class="table-wrap audit-diff-table"><table><thead><tr><th>ฟิลด์</th><th>ค่าเดิม</th><th>ค่าใหม่</th></tr></thead><tbody>${diffs.slice(0, 100).map((row) => `<tr><td><code>${escapeHtml(row.key)}</code></td><td class="audit-value-old">${escapeHtml(row.before)}</td><td class="audit-value-new">${escapeHtml(row.after)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="empty-state"><i data-lucide="file-search"></i><p>รายการนี้ไม่มีค่า Before/After ที่แตกต่างกัน หรือเป็นเหตุการณ์สถานะ</p></div>`}
+        <div class="form-actions"><button id="auditOpenModuleButton" class="button button-secondary" type="button"><i data-lucide="${moduleInfo.icon}"></i>เปิด ${escapeHtml(moduleInfo.label)}</button><button id="closeAuditDetailButton" class="button button-primary" type="button">ปิด</button></div>
+      </section>
+    </div>`;
+  const close = () => { els.modalRoot.innerHTML = ""; };
+  document.getElementById("closeModalButton")?.addEventListener("click", close);
+  document.getElementById("closeAuditDetailButton")?.addEventListener("click", close);
+  document.getElementById("auditOpenModuleButton")?.addEventListener("click", () => { close(); showView(moduleInfo.route); });
+  els.modalRoot.querySelector(".modal-backdrop")?.addEventListener("click", (event) => { if (event.target === event.currentTarget) close(); });
+  ensureIcons();
+}
+
+function renderAuditCenter() {
+  if (state.auditLoading && !state.auditLoaded) {
+    els.auditView.innerHTML = '<div class="loading-skeleton"></div>';
+    return;
+  }
+  const summary = auditSummary();
+  els.auditView.innerHTML = `
+    <div class="page-grid audit-page">
+      <article class="panel audit-hero">
+        <div class="panel-head"><div><p class="eyebrow">AUDIT & CHANGE HISTORY</p><h2>ประวัติและตรวจสอบ</h2><p>ค้นการเพิ่ม แก้ไข ลบ Sync และรับรองรอบ พร้อมตรวจค่าเดิม–ค่าใหม่จาก Audit Log ที่แก้ไขย้อนหลังไม่ได้</p></div><span class="badge badge-ready">Phase 9</span></div>
+        <form id="auditFilterForm" class="audit-toolbar">
+          <div class="field audit-search-field"><label for="auditSearchInput">ค้นหา</label><input id="auditSearchInput" type="search" value="${escapeHtml(state.auditQuery)}" placeholder="ชื่อ รหัสพนักงาน เดือน หรือ Action" /></div>
+          <div class="field compact-field"><label for="auditModuleFilter">โมดูล</label><select id="auditModuleFilter">${auditModuleOptions()}</select></div>
+          <div class="field compact-field"><label for="auditActionFilter">ประเภท</label><select id="auditActionFilter">${auditActionOptions()}</select></div>
+          <div class="field compact-field"><label for="auditDateFrom">ตั้งแต่วันที่</label><input id="auditDateFrom" type="date" value="${escapeHtml(state.auditDateFrom)}" /></div>
+          <div class="field compact-field"><label for="auditDateTo">ถึงวันที่</label><input id="auditDateTo" type="date" value="${escapeHtml(state.auditDateTo)}" /></div>
+          <div class="field compact-field"><label for="auditLimitFilter">โหลดล่าสุด</label><select id="auditLimitFilter">${[100,300,500,1000].map((value) => `<option value="${value}" ${state.auditLimit === value ? "selected" : ""}>${value} รายการ</option>`).join("")}</select></div>
+          <div class="panel-actions audit-filter-actions"><button class="button button-primary" type="submit"><i data-lucide="search"></i>ค้นหา</button><button id="resetAuditFilters" class="button button-ghost" type="button"><i data-lucide="rotate-ccw"></i>ล้าง</button></div>
+        </form>
+      </article>
+      <div class="kpi-grid audit-kpi-grid">
+        <article class="kpi-card"><div class="kpi-head"><span>ประวัติที่โหลด</span><span class="kpi-icon"><i data-lucide="database"></i></span></div><div class="kpi-value">${summary.loaded}</div><div class="kpi-note">ล่าสุดไม่เกิน ${state.auditLimit} รายการ</div></article>
+        <article class="kpi-card"><div class="kpi-head"><span>ตรงตามตัวกรอง</span><span class="kpi-icon"><i data-lucide="list-filter"></i></span></div><div class="kpi-value">${summary.filtered}</div><div class="kpi-note">พร้อมตรวจสอบและ Export</div></article>
+        <article class="kpi-card"><div class="kpi-head"><span>กิจกรรมวันนี้</span><span class="kpi-icon"><i data-lucide="calendar-days"></i></span></div><div class="kpi-value">${summary.today}</div><div class="kpi-note">ตามเวลาท้องถิ่นของเครื่อง</div></article>
+        <article class="kpi-card"><div class="kpi-head"><span>รับรอง/เปิดรอบ</span><span class="kpi-icon"><i data-lucide="calendar-check-2"></i></span></div><div class="kpi-value">${summary.closures}</div><div class="kpi-note">ในชุดประวัติที่โหลด</div></article>
+        <article class="kpi-card"><div class="kpi-head"><span>รายการสำคัญ</span><span class="kpi-icon"><i data-lucide="triangle-alert"></i></span></div><div class="kpi-value">${summary.destructive}</div><div class="kpi-note">ลบข้อมูลหรือเปิดรอบแก้ไข</div></article>
+      </div>
+      <article class="panel audit-log-panel">
+        <div class="panel-head"><div><h2>ประวัติการเปลี่ยนแปลง</h2><p>แสดง ${summary.logs.length} จาก ${state.auditLogs.length} รายการที่โหลด</p></div><div class="panel-actions"><button id="refreshAuditButton" class="button button-secondary" type="button"><i data-lucide="refresh-cw"></i>โหลดใหม่</button><button id="exportAuditButton" class="button button-primary" type="button" ${summary.logs.length ? "" : "disabled"}><i data-lucide="file-down"></i>Export CSV</button></div></div>
+        ${summary.logs.length ? `<div class="table-wrap audit-log-table"><table><thead><tr><th>วันเวลา</th><th>การดำเนินการ</th><th>โมดูล</th><th>พนักงาน/เป้าหมาย</th><th>ผู้ดำเนินการ</th><th></th></tr></thead><tbody>${summary.logs.map((log) => { const moduleKey = auditModuleKey(log); const moduleInfo = AUDIT_MODULE_DEFINITIONS[moduleKey] || AUDIT_MODULE_DEFINITIONS.system; return `<tr><td><strong>${escapeHtml(formatDate(log.createdAt))}</strong><br><small>${escapeHtml(log.id.slice(0, 10))}</small></td><td>${auditActionBadge(auditActionGroup(log.action))}<strong class="audit-action-title">${escapeHtml(auditActionLabel(log.action))}</strong></td><td><span class="audit-module-label"><i data-lucide="${moduleInfo.icon}"></i>${escapeHtml(moduleInfo.label)}</span></td><td><strong>${escapeHtml(auditTargetLabel(log))}</strong><br><small><code>${escapeHtml(log.targetType)}</code></small></td><td>${escapeHtml(auditActorLabel(log))}</td><td><div class="audit-row-actions"><button class="icon-button audit-detail-button" data-audit-id="${escapeHtml(log.id)}" type="button" aria-label="ดูรายละเอียด"><i data-lucide="file-diff"></i></button><button class="icon-button audit-route-button" data-audit-route="${moduleInfo.route}" type="button" aria-label="เปิดโมดูล"><i data-lucide="arrow-up-right"></i></button></div></td></tr>`; }).join("")}</tbody></table></div>` : `<div class="empty-state"><i data-lucide="history"></i><p>${state.auditLoaded ? "ไม่พบประวัติตามตัวกรองที่เลือก" : "กดโหลดใหม่เพื่ออ่าน Audit Log"}</p></div>`}
+      </article>
+    </div>`;
+  document.getElementById("auditFilterForm")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    state.auditQuery = document.getElementById("auditSearchInput")?.value || "";
+    state.auditModule = document.getElementById("auditModuleFilter")?.value || "all";
+    state.auditAction = document.getElementById("auditActionFilter")?.value || "all";
+    state.auditDateFrom = document.getElementById("auditDateFrom")?.value || "";
+    state.auditDateTo = document.getElementById("auditDateTo")?.value || "";
+    renderAuditCenter();
+  });
+  ["auditModuleFilter", "auditActionFilter", "auditDateFrom", "auditDateTo"].forEach((id) => document.getElementById(id)?.addEventListener("change", () => {
+    state.auditQuery = document.getElementById("auditSearchInput")?.value || "";
+    state.auditModule = document.getElementById("auditModuleFilter")?.value || "all";
+    state.auditAction = document.getElementById("auditActionFilter")?.value || "all";
+    state.auditDateFrom = document.getElementById("auditDateFrom")?.value || "";
+    state.auditDateTo = document.getElementById("auditDateTo")?.value || "";
+    renderAuditCenter();
+  }));
+  document.getElementById("auditLimitFilter")?.addEventListener("change", (event) => {
+    state.auditLimit = Number(event.target.value) || 300;
+    state.auditLoaded = false;
+    refreshAuditData({ force: true });
+  });
+  document.getElementById("resetAuditFilters")?.addEventListener("click", () => {
+    state.auditQuery = ""; state.auditModule = "all"; state.auditAction = "all"; state.auditDateFrom = ""; state.auditDateTo = "";
+    renderAuditCenter();
+  });
+  document.getElementById("refreshAuditButton")?.addEventListener("click", () => refreshAuditData({ force: true }));
+  document.getElementById("exportAuditButton")?.addEventListener("click", exportAuditCsv);
+  els.auditView.querySelectorAll(".audit-detail-button").forEach((button) => button.addEventListener("click", () => openAuditDetail(button.dataset.auditId)));
+  els.auditView.querySelectorAll(".audit-route-button").forEach((button) => button.addEventListener("click", () => showView(button.dataset.auditRoute)));
+  ensureIcons();
+}
+
+function exportAuditCsv() {
+  const rows = [["วันเวลา", "ผู้ดำเนินการ", "ประเภท", "การดำเนินการ", "โมดูล", "พนักงาน/เป้าหมาย", "Target Type", "Target ID", "ค่าเดิม", "ค่าใหม่"]];
+  filteredAuditLogs().forEach((log) => {
+    const moduleInfo = AUDIT_MODULE_DEFINITIONS[auditModuleKey(log)] || AUDIT_MODULE_DEFINITIONS.system;
+    rows.push([
+      log.createdAt, auditActorLabel(log), auditActionGroup(log.action), auditActionLabel(log.action), moduleInfo.label,
+      auditTargetLabel(log), log.targetType, log.targetId,
+      log.before == null ? "" : auditDisplayValue(log.before),
+      log.after == null ? "" : auditDisplayValue(log.after),
+    ]);
+  });
+  downloadCsv(rows, `employee-hub-audit-${new Date().toISOString().slice(0, 10)}.csv`);
+}
+
 async function refreshSystemHealth({ quiet = false } = {}) {
   if (!state.user || state.systemLoading) return;
   state.systemLoading = true;
@@ -3876,6 +4236,7 @@ function bindGlobalEvents() {
   els.refreshButton.addEventListener("click", () => {
     if (state.currentView === "executive") refreshExecutiveData({ force: true });
     else if (state.currentView === "annual") refreshAnnualData({ force: true });
+    else if (state.currentView === "audit") refreshAuditData({ force: true });
     else if (state.currentView === "performance") {
       refreshPerformanceData({ force: true });
       if (state.performanceTab === "employee360") refreshEmployee360Data({ quiet: true });
