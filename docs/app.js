@@ -42,6 +42,25 @@ const PERFORMANCE_KPIS = Object.freeze([
 ]);
 const PERFORMANCE_DEFAULT_SCORE = 60;
 
+// ข้อมูลย้อนหลังปี 2568 จากไฟล์ต้นฉบับมีเฉพาะคะแนนเฉลี่ยประจำปีรายบุคคล
+// ไม่พบคะแนนรายเดือนหรือคะแนนแยก 6 หัวข้อ จึงแสดงแบบ Read-only โดยไม่สร้างข้อมูลขึ้นใหม่
+const PERFORMANCE_LEGACY_ANNUAL_YEAR = 2568;
+const PERFORMANCE_LEGACY_ANNUAL_SOURCE = "Excel: สรุปแบบประเมินปี 69.xlsx · ชีต รายบุคคล";
+const PERFORMANCE_LEGACY_ANNUAL_SCORES = Object.freeze({
+  pongsak: 78.4090909090909,
+  aeklerd: 69.94318181818181,
+  somchai: 64.77272727272727,
+  kansak: 71.36363636363636,
+  kasidet: 85.9659090909091,
+  prawit: 69.77272727272727,
+  nattapong: 70.9659090909091,
+  chatchai: 74.0909090909091,
+  thanaboon: 73.80681818181819,
+  aphilak: 73.81,
+  phatsapong: null,
+  jeerasak: null,
+});
+
 const state = {
   user: null,
   profile: null,
@@ -652,8 +671,33 @@ function latestPerformanceMonth(records = state.performanceEvaluations) {
   return months.length ? Math.max(...months) : new Date().getMonth();
 }
 
+function isLegacyAnnualPerformanceYear(year = state.performanceYear) {
+  return Number(year) === PERFORMANCE_LEGACY_ANNUAL_YEAR;
+}
+
+function legacyAnnualPerformanceRows() {
+  const employeesById = employeeMap();
+  const rows = Object.entries(PERFORMANCE_LEGACY_ANNUAL_SCORES)
+    .map(([employeeId, score]) => {
+      const percentage = Number(score);
+      const employee = employeesById.get(employeeId);
+      return Number.isFinite(percentage) && percentage > 0 && employee
+        ? { employeeId, employee, percentage }
+        : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.percentage - a.percentage || (Number(a.employee?.sortOrder) || 999999) - (Number(b.employee?.sortOrder) || 999999));
+  let previousScore = null;
+  let currentRank = 0;
+  return rows.map((row, index) => {
+    if (previousScore === null || Math.abs(row.percentage - previousScore) > 0.000001) currentRank = index + 1;
+    previousScore = row.percentage;
+    return { ...row, rank: currentRank };
+  });
+}
+
 function performanceYearOptions() {
-  const years = [...new Set([...(state.performanceSettings.years || []), ...(state.evaluationSummary.years || []), Number(state.performanceYear)])].filter(Number.isFinite).sort((a, b) => b - a);
+  const years = [...new Set([PERFORMANCE_LEGACY_ANNUAL_YEAR, ...(state.performanceSettings.years || []), ...(state.evaluationSummary.years || []), Number(state.performanceYear)])].filter(Number.isFinite).sort((a, b) => b - a);
   return years.map((year) => `<option value="${year}" ${year === Number(state.performanceYear) ? "selected" : ""}>${year}</option>`).join("");
 }
 
@@ -672,6 +716,14 @@ async function refreshPerformanceData({ force = false, quiet = false } = {}) {
   state.performanceLoading = true;
   if (!quiet) setSyncStatus("syncing", "กำลังโหลด Performance Summary");
   if (state.currentView === "performance") renderPerformance();
+  if (isLegacyAnnualPerformanceYear()) {
+    state.performanceEvaluations = [];
+    state.performanceDataKey = key;
+    state.performanceLoading = false;
+    setSyncStatus("online", "โหลดข้อมูลย้อนหลังปี 2568 แล้ว");
+    if (state.currentView === "performance") renderPerformance();
+    return;
+  }
   try {
     const snapshot = await window.EmployeeHubDatabase.loadPerformanceSnapshot(state.performanceYear);
     state.performanceSettings = snapshot.settings;
@@ -713,19 +765,21 @@ function performanceResultsForMonth() {
 }
 
 function renderPerformance() {
+  const legacyAnnual = isLegacyAnnualPerformanceYear();
+  if (legacyAnnual && ["entry", "sync"].includes(state.performanceTab)) state.performanceTab = "dashboard";
   const firstLoading = state.performanceLoading && !state.performanceDataKey;
   els.performanceView.innerHTML = `
     <div class="page-grid">
       <article class="panel performance-hero">
-        <div class="panel-head"><div><h2>Performance Summary</h2><p>บันทึกและวิเคราะห์คะแนน KPI รายเดือนจากฐานข้อมูล Firebase เดิม</p></div><span class="badge badge-ready">Phase 4.1 พร้อมใช้งาน</span></div>
+        <div class="panel-head"><div><h2>Performance Summary</h2><p>${legacyAnnual ? "ข้อมูลปี 2568 เป็นคะแนนสรุปรายปีจากไฟล์ต้นฉบับ และเปิดดูแบบ Read-only" : "บันทึกและวิเคราะห์คะแนน KPI รายเดือนจากฐานข้อมูล Firebase เดิม"}</p></div><span class="badge badge-ready">Phase 5.2.1</span></div>
         <div class="performance-toolbar">
           <div class="field compact-field"><label for="performanceYearPicker">ปีประเมิน</label><select id="performanceYearPicker">${performanceYearOptions()}</select></div>
-          <div class="field compact-field"><label for="performanceMonthPicker">เดือน</label><select id="performanceMonthPicker">${performanceMonthOptions()}</select></div>
+          <div class="field compact-field"><label for="performanceMonthPicker">${legacyAnnual ? "รูปแบบข้อมูล" : "เดือน"}</label><select id="performanceMonthPicker" ${legacyAnnual ? "disabled" : ""}>${legacyAnnual ? '<option value="annual">สรุปรายปี</option>' : performanceMonthOptions()}</select></div>
         </div>
         <div class="tab-list" role="tablist" aria-label="Performance Summary">
           ${performanceTabButton("dashboard", "layout-dashboard", "ภาพรวม")}
-          ${performanceTabButton("entry", "square-pen", "บันทึกคะแนน")}
-          ${performanceTabButton("sync", "refresh-cw", "เชื่อมคะแนน")}
+          ${legacyAnnual ? "" : performanceTabButton("entry", "square-pen", "บันทึกคะแนน")}
+          ${legacyAnnual ? "" : performanceTabButton("sync", "refresh-cw", "เชื่อมคะแนน")}
           ${performanceTabButton("history", "history", "ประวัติ")}
           ${performanceTabButton("reports", "file-down", "รายงาน")}
           ${performanceTabButton("employee360", "scan-face", "รายงานรวม 360°")}
@@ -736,15 +790,17 @@ function renderPerformance() {
 
   document.getElementById("performanceYearPicker")?.addEventListener("change", (event) => {
     state.performanceYear = Number(event.target.value);
+    if (isLegacyAnnualPerformanceYear() && ["entry", "sync"].includes(state.performanceTab)) state.performanceTab = "dashboard";
     state.performanceDataKey = "";
     state.performanceSyncKey = "";
     state.performanceSyncData = null;
     state.performanceManualOverride = false;
     void refreshPerformanceData({ force: true }).then(() => {
-      if (state.performanceTab === "sync") void refreshPerformanceSyncData({ force: true });
+      if (state.performanceTab === "sync" && !isLegacyAnnualPerformanceYear()) void refreshPerformanceSyncData({ force: true });
     });
   });
   document.getElementById("performanceMonthPicker")?.addEventListener("change", (event) => {
+    if (isLegacyAnnualPerformanceYear()) return;
     state.performanceMonth = Number(event.target.value);
     state.performanceSyncKey = "";
     state.performanceSyncData = null;
@@ -757,13 +813,14 @@ function renderPerformance() {
     state.performanceManualOverride = false;
     renderPerformance();
     if (state.performanceTab === "employee360" && !state.employee360Data) void refreshEmployee360Data();
-    if (state.performanceTab === "sync") void refreshPerformanceSyncData();
+    if (state.performanceTab === "sync" && !isLegacyAnnualPerformanceYear()) void refreshPerformanceSyncData();
   }));
   bindPerformanceTabEvents();
   ensureIcons();
 }
 
 function renderPerformanceTabContent() {
+  if (isLegacyAnnualPerformanceYear() && ["entry", "sync"].includes(state.performanceTab)) return renderLegacyAnnualPerformanceDashboard();
   if (state.performanceTab === "entry") return renderPerformanceEntry();
   if (state.performanceTab === "sync") return renderPerformanceSync();
   if (state.performanceTab === "history") return renderPerformanceHistory();
@@ -772,7 +829,37 @@ function renderPerformanceTabContent() {
   return renderPerformanceDashboard();
 }
 
+function renderLegacyAnnualPerformanceDashboard() {
+  const rows = legacyAnnualPerformanceRows();
+  const activeCount = activeEmployees().length;
+  const average = rows.length ? rows.reduce((sum, row) => sum + row.percentage, 0) / rows.length : 0;
+  const top = rows[0] || null;
+  return `
+    <div class="notice notice-info"><i data-lucide="archive"></i><div><strong>ข้อมูลย้อนหลังปี 2568</strong><br>ไฟล์ต้นฉบับเก็บเฉพาะคะแนนเฉลี่ยประจำปีรายบุคคล ไม่พบคะแนนรายเดือนหรือคะแนนแยก 6 หัวข้อ ระบบจึงแสดงข้อมูลนี้แบบ Read-only และไม่สร้างรายละเอียดที่ไม่มีในต้นฉบับ</div></div>
+    <div class="kpi-grid">
+      <article class="kpi-card"><div class="kpi-head"><span>คะแนนเฉลี่ยแผนก</span><span class="kpi-icon"><i data-lucide="gauge"></i></span></div><div class="kpi-value">${rows.length ? formatNumber(average, 1) : "-"}</div><div class="kpi-note">ปี ${PERFORMANCE_LEGACY_ANNUAL_YEAR}</div></article>
+      <article class="kpi-card"><div class="kpi-head"><span>อันดับ 1</span><span class="kpi-icon"><i data-lucide="trophy"></i></span></div><div class="kpi-value">${top ? formatNumber(top.percentage, 1) : "-"}</div><div class="kpi-note">${escapeHtml(top?.employee?.fullName || "ยังไม่มีข้อมูล")}</div></article>
+      <article class="kpi-card"><div class="kpi-head"><span>มีข้อมูลย้อนหลัง</span><span class="kpi-icon"><i data-lucide="database"></i></span></div><div class="kpi-value">${rows.length}/${activeCount}</div><div class="kpi-note">รายบุคคล</div></article>
+      <article class="kpi-card"><div class="kpi-head"><span>รูปแบบข้อมูล</span><span class="kpi-icon"><i data-lucide="calendar-range"></i></span></div><div class="kpi-value">รายปี</div><div class="kpi-note">ไม่มีรายละเอียดรายเดือน</div></article>
+    </div>
+    <div class="split-grid">
+      <article class="panel">
+        <div class="panel-head"><div><h2>อันดับประจำปี 2568</h2><p>เรียงจากคะแนนเฉลี่ยประจำปีในไฟล์ต้นฉบับ</p></div></div>
+        ${rows.length ? `<div class="ranking-list">${rows.map((row) => `<div class="ranking-row"><span class="rank-number">${row.rank}</span><span class="ranking-name"><strong>${escapeHtml(row.employee.fullName)}</strong><small>${escapeHtml(row.employee.employeeCode || "")}</small></span><span class="ranking-score"><strong>${formatNumber(row.percentage, 1)}</strong><small>คะแนนเฉลี่ยประจำปี</small></span></div>`).join("")}</div>` : `<div class="empty-state"><i data-lucide="clipboard-x"></i><p>ไม่พบข้อมูลย้อนหลัง</p></div>`}
+      </article>
+      <article class="panel">
+        <div class="panel-head"><div><h2>ขอบเขตข้อมูลต้นฉบับ</h2><p>เพื่อป้องกันการแสดงข้อมูลเกินกว่าหลักฐานที่มี</p></div></div>
+        <div class="summary-row"><span>มีคะแนนเฉลี่ยประจำปี</span><strong>${rows.length} คน</strong></div>
+        <div class="summary-row"><span>ไม่มีคะแนนในต้นฉบับ</span><strong>${Math.max(0, activeCount - rows.length)} คน</strong></div>
+        <div class="summary-row"><span>คะแนนรายเดือน</span><strong>ไม่มีข้อมูล</strong></div>
+        <div class="summary-row"><span>คะแนนแยก 6 หัวข้อ</span><strong>ไม่มีข้อมูล</strong></div>
+        <div class="notice notice-warning"><i data-lucide="shield-check"></i><div>ปี 2568 ไม่เปิดให้บันทึก แก้ไข หรือเชื่อมคะแนน เพราะต้นฉบับรองรับเฉพาะผลสรุปรายปี</div></div>
+      </article>
+    </div>`;
+}
+
 function renderPerformanceDashboard() {
+  if (isLegacyAnnualPerformanceYear()) return renderLegacyAnnualPerformanceDashboard();
   const allResults = performanceResultsForMonth();
   const results = allResults.filter((row) => row.disciplinePending !== true);
   const pendingCount = allResults.filter((row) => row.disciplinePending === true).length;
@@ -1053,6 +1140,18 @@ function updatePerformanceEntryPreview() {
 function renderPerformanceHistory() {
   const employees = sortedActiveEmployees();
   const visible = state.performanceHistoryEmployeeId === "all" ? employees : employees.filter((employee) => employee.id === state.performanceHistoryEmployeeId);
+  if (isLegacyAnnualPerformanceYear()) {
+    return `
+      <article class="panel">
+        <div class="panel-head"><div><h2>ประวัติรายบุคคล ปี ${PERFORMANCE_LEGACY_ANNUAL_YEAR}</h2><p>ข้อมูลสรุปรายปีแบบ Read-only จากไฟล์ต้นฉบับ</p></div><div class="field compact-field"><label for="performanceHistoryEmployee">พนักงาน</label><select id="performanceHistoryEmployee"><option value="all">พนักงานทุกคน</option>${employees.map((employee) => `<option value="${escapeHtml(employee.id)}" ${employee.id === state.performanceHistoryEmployeeId ? "selected" : ""}>${escapeHtml(`${employee.employeeCode} · ${employee.fullName}`)}</option>`).join("")}</select></div></div>
+        <div class="notice notice-info"><i data-lucide="info"></i><div>ปี 2568 มีเฉพาะคะแนนเฉลี่ยประจำปี จึงไม่มีช่องคะแนนรายเดือนหรือปุ่มแก้ไข</div></div>
+        <div class="table-wrap"><table><thead><tr><th>รหัส</th><th>ชื่อพนักงาน</th><th class="money">คะแนนเฉลี่ยประจำปี</th><th>สถานะ</th><th>แหล่งข้อมูล</th></tr></thead><tbody>${visible.map((employee) => {
+          const score = Number(PERFORMANCE_LEGACY_ANNUAL_SCORES[employee.id]);
+          const hasScore = Number.isFinite(score) && score > 0;
+          return `<tr><td><strong>${escapeHtml(employee.employeeCode)}</strong></td><td>${escapeHtml(employee.fullName)}</td><td class="money"><strong>${hasScore ? formatNumber(score, 1) : "-"}</strong></td><td><span class="badge ${hasScore ? "badge-ready" : "badge-planned"}">${hasScore ? "มีข้อมูล" : "ไม่มีข้อมูลในต้นฉบับ"}</span></td><td>${hasScore ? escapeHtml(PERFORMANCE_LEGACY_ANNUAL_SOURCE) : "-"}</td></tr>`;
+        }).join("")}</tbody></table></div>
+      </article>`;
+  }
   const rows = visible.map((employee) => {
     const values = PERFORMANCE_MONTHS.map((_, month) => {
       const record = performanceRecord(employee.id, month);
@@ -1069,6 +1168,14 @@ function renderPerformanceHistory() {
 }
 
 function renderPerformanceReports() {
+  if (isLegacyAnnualPerformanceYear()) {
+    const rows = legacyAnnualPerformanceRows();
+    return `
+      <div class="split-grid">
+        <article class="panel"><div class="panel-head"><div><h2>ส่งออกรายงานปี ${PERFORMANCE_LEGACY_ANNUAL_YEAR}</h2><p>คะแนนเฉลี่ยประจำปีรายบุคคลจากไฟล์ต้นฉบับ</p></div></div><div class="kpi-grid compact-kpi-grid"><article class="kpi-card"><div class="kpi-head"><span>มีข้อมูล</span><span class="kpi-icon"><i data-lucide="database"></i></span></div><div class="kpi-value">${rows.length}</div></article><article class="kpi-card"><div class="kpi-head"><span>รูปแบบ</span><span class="kpi-icon"><i data-lucide="calendar-range"></i></span></div><div class="kpi-value">รายปี</div></article></div><div class="form-actions"><button id="exportPerformanceCsv" class="button button-primary" type="button"><i data-lucide="file-down"></i>Export CSV ปี ${PERFORMANCE_LEGACY_ANNUAL_YEAR}</button></div></article>
+        <article class="panel"><div class="panel-head"><div><h2>ข้อจำกัดของรายงาน</h2><p>รักษาข้อมูลตามต้นฉบับโดยไม่เติมรายละเอียดที่ไม่มี</p></div></div><div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div>CSV ปี 2568 จะมีเฉพาะคะแนนเฉลี่ยประจำปี ไม่มีเดือน คะแนน 6 หัวข้อ GPA หรือสถานะ Sync</div></div></article>
+      </div>`;
+  }
   const records = state.performanceEvaluations.filter((record) => record.year === Number(state.performanceYear));
   const evaluatedEmployees = new Set(records.map((record) => record.employeeId)).size;
   return `
@@ -1080,6 +1187,16 @@ function renderPerformanceReports() {
 
 function exportPerformanceCsv() {
   const employeesById = employeeMap();
+  if (isLegacyAnnualPerformanceYear()) {
+    const rows = [["ปี", "รหัสพนักงาน", "ชื่อพนักงาน", "คะแนนเฉลี่ยประจำปี", "สถานะ", "แหล่งข้อมูล"]];
+    sortedActiveEmployees().forEach((employee) => {
+      const score = Number(PERFORMANCE_LEGACY_ANNUAL_SCORES[employee.id]);
+      const hasScore = Number.isFinite(score) && score > 0;
+      rows.push([PERFORMANCE_LEGACY_ANNUAL_YEAR, employee.employeeCode || "", employee.fullName, hasScore ? score.toFixed(2) : "", hasScore ? "มีข้อมูล" : "ไม่มีข้อมูลในต้นฉบับ", hasScore ? PERFORMANCE_LEGACY_ANNUAL_SOURCE : ""]);
+    });
+    downloadCsv(rows, `performance-summary-${PERFORMANCE_LEGACY_ANNUAL_YEAR}-annual.csv`);
+    return;
+  }
   const rows = [["ปี", "เดือน", "รหัสพนักงาน", "ชื่อพนักงาน", ...PERFORMANCE_KPIS.map((kpi) => kpi.title), "GPA", "คะแนนรวม", "ระดับ", "สถานะ Sync", "หัวข้อ 6", "หมายเหตุ", "แก้ไขล่าสุด"]];
   state.performanceEvaluations.filter((record) => record.year === Number(state.performanceYear)).sort((a, b) => a.month - b.month || (Number(employeesById.get(a.employeeId)?.sortOrder) || 999999) - (Number(employeesById.get(b.employeeId)?.sortOrder) || 999999)).forEach((record) => {
     const employee = employeesById.get(record.employeeId);
