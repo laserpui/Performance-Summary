@@ -70,6 +70,30 @@ function activeEmployees() {
   return state.employees.filter((employee) => employee.isActive);
 }
 
+function nextEmployeeCode() {
+  const max = state.employees.reduce((highest, employee) => {
+    const match = /^EMP(\d+)$/i.exec(String(employee.employeeCode || ""));
+    return match ? Math.max(highest, Number(match[1])) : highest;
+  }, 0);
+  return `EMP${String(max + 1).padStart(3, "0")}`;
+}
+
+function nextEmployeeSortOrder() {
+  return state.employees.reduce((highest, employee) => Math.max(highest, Number(employee.sortOrder) || 0), 0) + 1;
+}
+
+function buildEmployeeCodePlan() {
+  const invalid = state.employees.filter((employee) => !/^\d{4}-\d{2}-\d{2}$/.test(String(employee.startDate || "")));
+  if (invalid.length) throw new Error(`ยังมีพนักงาน ${invalid.length} คนที่ไม่มีวันที่เริ่มงานที่ถูกต้อง`);
+  return [...state.employees]
+    .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.fullName.localeCompare(b.fullName, "th") || a.id.localeCompare(b.id))
+    .map((employee, index) => ({
+      ...employee,
+      nextEmployeeCode: `EMP${String(index + 1).padStart(3, "0")}`,
+      nextSortOrder: index + 1,
+    }));
+}
+
 function getLatestIncentiveMonth() {
   return state.incentives.map((record) => record.yearMonth).filter(Boolean).sort().at(-1) || currentYearMonth();
 }
@@ -271,16 +295,17 @@ function renderEmployees() {
         <div class="toolbar"><input id="employeeSearch" class="toolbar-grow" type="search" placeholder="ค้นหาชื่อหรือรหัสพนักงาน" value="${escapeHtml(state.employeeSearch)}" /><span id="employeeCountBadge" class="badge badge-ready">${visibleCount} รายการ</span></div>
         <div class="table-wrap">
           <table>
-            <thead><tr><th>รหัส</th><th>ชื่อพนักงาน</th><th>วันที่เริ่มงาน</th><th>สถานะ</th><th>Legacy IDs</th><th></th></tr></thead>
+            <thead><tr><th>ลำดับ</th><th>รหัส</th><th>ชื่อพนักงาน</th><th>วันที่เริ่มงาน</th><th>สถานะ</th><th>Legacy IDs</th><th></th></tr></thead>
             <tbody>${rows.map((employee) => `
               <tr data-employee-search="${escapeHtml(`${employee.employeeCode} ${employee.fullName}`.toLocaleLowerCase("th"))}" ${query && !`${employee.employeeCode} ${employee.fullName}`.toLocaleLowerCase("th").includes(query) ? "hidden" : ""}>
+                <td>${employee.sortOrder || "-"}</td>
                 <td><strong>${escapeHtml(employee.employeeCode || "-")}</strong></td>
                 <td>${escapeHtml(employee.fullName)}</td>
                 <td>${escapeHtml(employee.startDate || "-")}</td>
                 <td><span class="badge ${employee.isActive ? "badge-ready" : "badge-planned"}">${employee.isActive ? "ใช้งาน" : "ปิดใช้งาน"}</span></td>
                 <td><small>Monthly: ${escapeHtml(employee.legacyIds.monthlyPerformance || "-")}<br>Service: ${escapeHtml(employee.legacyIds.serviceIncentive || "-")}<br>Workday: ${escapeHtml(employee.legacyIds.workdayInsight || "-")}</small></td>
                 <td><div class="actions-cell"><button class="icon-button edit-employee" data-id="${escapeHtml(employee.id)}" type="button" aria-label="แก้ไข"><i data-lucide="pencil"></i></button></div></td>
-              </tr>`).join("") || `<tr><td colspan="6"><div class="empty-state"><i data-lucide="users"></i><p>ยังไม่มีรายชื่อพนักงาน</p></div></td></tr>`}</tbody>
+              </tr>`).join("") || `<tr><td colspan="7"><div class="empty-state"><i data-lucide="users"></i><p>ยังไม่มีรายชื่อพนักงาน</p></div></td></tr>`}</tbody>
           </table>
         </div>
       </article>
@@ -313,10 +338,10 @@ function openEmployeeModal(employee = null) {
         <div class="modal-head"><div><p class="eyebrow">EMPLOYEE MASTER</p><h2 id="employeeModalTitle">${isEdit ? "แก้ไขพนักงาน" : "เพิ่มพนักงาน"}</h2></div><button id="closeModalButton" class="icon-button" type="button" aria-label="ปิด"><i data-lucide="x"></i></button></div>
         <form id="employeeForm">
           <div class="form-grid">
-            <div class="field"><label for="employeeCode">รหัสพนักงาน</label><input id="employeeCode" maxlength="20" value="${escapeHtml(employee?.employeeCode || "")}" placeholder="EMP013" /></div>
+            <div class="field"><label for="employeeCode">รหัสพนักงาน</label><input id="employeeCode" maxlength="20" value="${escapeHtml(employee?.employeeCode || nextEmployeeCode())}" placeholder="EMP013" /></div>
             <div class="field"><label for="employeeStartDate">วันที่เริ่มงาน</label><input id="employeeStartDate" type="date" value="${escapeHtml(employee?.startDate || "")}" /></div>
             <div class="field field-full"><label for="employeeFullName">ชื่อพนักงาน</label><input id="employeeFullName" maxlength="100" required value="${escapeHtml(employee?.fullName || "")}" /></div>
-            <div class="field"><label for="employeeSortOrder">ลำดับแสดงผล</label><input id="employeeSortOrder" type="number" min="0" value="${employee?.sortOrder || state.employees.length + 1}" /></div>
+            <div class="field"><label for="employeeSortOrder">ลำดับแสดงผล</label><input id="employeeSortOrder" type="number" min="0" value="${employee?.sortOrder || nextEmployeeSortOrder()}" /></div>
             <div class="field"><label for="employeeActive">สถานะ</label><select id="employeeActive"><option value="true" ${employee?.isActive !== false ? "selected" : ""}>ใช้งาน</option><option value="false" ${employee?.isActive === false ? "selected" : ""}>ปิดใช้งาน</option></select></div>
           </div>
           <div class="form-actions"><button class="button button-primary" type="submit"><i data-lucide="save"></i>บันทึก</button><button id="cancelEmployeeButton" class="button button-ghost" type="button">ยกเลิก</button></div>
@@ -367,9 +392,10 @@ function renderService() {
   const totals = sumRecords(monthRecords);
   const selectedRecord = serviceRecordForSelection();
   const sortedRows = [...monthRecords].sort((a, b) => {
-    const nameA = employeesById.get(a.employeeId)?.fullName || a.employeeId;
-    const nameB = employeesById.get(b.employeeId)?.fullName || b.employeeId;
-    return nameA.localeCompare(nameB, "th");
+    const employeeA = employeesById.get(a.employeeId);
+    const employeeB = employeesById.get(b.employeeId);
+    return (Number(employeeA?.sortOrder) || 999999) - (Number(employeeB?.sortOrder) || 999999)
+      || String(employeeA?.fullName || a.employeeId).localeCompare(String(employeeB?.fullName || b.employeeId), "th");
   });
 
   els.serviceView.innerHTML = `
@@ -487,8 +513,14 @@ function exportServiceCsv() {
   const records = recordsForMonth(state.serviceMonth);
   if (!records.length) return showToast("ไม่มีข้อมูลสำหรับ Export", "warning");
   const employeesById = employeeMap();
+  const sortedRecords = [...records].sort((a, b) => {
+    const employeeA = employeesById.get(a.employeeId);
+    const employeeB = employeesById.get(b.employeeId);
+    return (Number(employeeA?.sortOrder) || 999999) - (Number(employeeB?.sortOrder) || 999999)
+      || String(employeeA?.fullName || a.employeeId).localeCompare(String(employeeB?.fullName || b.employeeId), "th");
+  });
   const rows = [["เดือน", "รหัสพนักงาน", "ชื่อพนักงาน", "ขายของ", "ประเมิน", "เวลา", "ยอดรวม", "แก้ไขล่าสุด"]];
-  records.forEach((record) => {
+  sortedRecords.forEach((record) => {
     const employee = employeesById.get(record.employeeId);
     rows.push([record.yearMonth, employee?.employeeCode || "", employee?.fullName || record.employeeId, record.salesAmount, record.evaluationAmount, record.timeAmount, record.totalAmount, record.updatedAt]);
   });
@@ -557,6 +589,13 @@ function renderMonthly() {
 function renderMigration() {
   const status = state.migrationStatus;
   const seedCounts = state.seed?.counts || { employees: 12, serviceIncentives: 72, serviceMonths: 6 };
+  let employeeCodePlan = [];
+  let employeeCodePlanError = "";
+  try { employeeCodePlan = buildEmployeeCodePlan(); } catch (error) { employeeCodePlanError = error.message; }
+  const employeeCodeOrderMatches = !employeeCodePlanError && employeeCodePlan.every((employee) =>
+    employee.employeeCode === employee.nextEmployeeCode && Number(employee.sortOrder) === employee.nextSortOrder
+  );
+  const employeeCodeOrderApplied = employeeCodeOrderMatches;
   els.migrationView.innerHTML = `
     <div class="page-grid">
       <article class="panel">
@@ -578,6 +617,18 @@ function renderMigration() {
           <button id="previewSeedButton" class="button button-secondary" type="button" ${state.seed ? "" : "disabled"}><i data-lucide="scan-search"></i>ตรวจไฟล์ Seed</button>
           <button id="importSeedButton" class="button button-primary" type="button" ${state.seed ? "" : "disabled"}><i data-lucide="database-zap"></i>${status ? "นำเข้าใหม่จากต้นฉบับ" : "เริ่มนำเข้า Phase 1"}</button>
         </div>
+      </article>
+      <article class="panel">
+        <div class="panel-head"><div><h2>ปรับรหัสพนักงานทั้งระบบ</h2><p>เรียงรหัสและลำดับแสดงผลจากวันที่เริ่มงานเก่าสุดไปใหม่สุด</p></div><span class="badge ${employeeCodeOrderApplied ? "badge-ready" : "badge-progress"}">${employeeCodeOrderApplied ? "ปรับแล้ว" : "พร้อมปรับ"}</span></div>
+        ${employeeCodeOrderApplied
+          ? `<div class="notice notice-success"><i data-lucide="circle-check"></i><div><strong>ใช้ลำดับตามอายุงานแล้ว</strong><br>${status?.employeeCodeUpdatedAt ? `อัปเดตล่าสุด ${formatDate(status.employeeCodeUpdatedAt)}` : "ตรวจสอบจากข้อมูลปัจจุบันแล้ว"}</div></div>`
+          : `<div class="notice notice-info"><i data-lucide="list-ordered"></i><div>ระบบจะเปลี่ยนเฉพาะ <code>employeeCode</code> และ <code>sortOrder</code> โดยคง Firebase Document ID, Legacy IDs และข้อมูล Service Incentive เดิมทั้งหมด</div></div>`}
+        ${employeeCodePlanError ? `<div class="notice notice-warning" style="margin-top:12px"><i data-lucide="triangle-alert"></i><div>${escapeHtml(employeeCodePlanError)}</div></div>` : `
+        <div class="table-wrap" style="margin-top:14px"><table>
+          <thead><tr><th>ลำดับ</th><th>รหัสใหม่</th><th>ชื่อพนักงาน</th><th>วันที่เริ่มงาน</th><th>รหัสปัจจุบัน</th></tr></thead>
+          <tbody>${employeeCodePlan.map((employee) => `<tr><td>${employee.nextSortOrder}</td><td><strong>${escapeHtml(employee.nextEmployeeCode)}</strong></td><td>${escapeHtml(employee.fullName)}</td><td>${escapeHtml(employee.startDate)}</td><td>${escapeHtml(employee.employeeCode || "-")}</td></tr>`).join("")}</tbody>
+        </table></div>`}
+        <div class="form-actions"><button id="applyEmployeeCodeOrderButton" class="button button-primary" type="button" ${employeeCodeOrderApplied || employeeCodePlanError ? "disabled" : ""}><i data-lucide="arrow-down-0-1"></i>${employeeCodeOrderApplied ? "ปรับรหัสเรียบร้อยแล้ว" : "ยืนยันปรับรหัสทั้งระบบ"}</button></div>
       </article>
       <article class="panel">
         <div class="panel-head"><div><h2>ลำดับหลังนำเข้า</h2><p>ตรวจสอบก่อนย้ายโมดูลถัดไป</p></div></div>
@@ -607,6 +658,25 @@ function renderMigration() {
       state.seed = null;
       state.seedFileName = "";
       showToast(error.message || "อ่านไฟล์ไม่สำเร็จ", "error");
+    }
+  });
+  document.getElementById("applyEmployeeCodeOrderButton")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const plan = buildEmployeeCodePlan();
+    const preview = plan.map((employee) => `${employee.nextEmployeeCode} · ${employee.fullName}`).join("\n");
+    if (!window.confirm(`ยืนยันเปลี่ยนรหัสพนักงานทั้ง ${plan.length} คนตามวันที่เริ่มงานหรือไม่?\n\n${preview}\n\nFirebase Document ID และข้อมูลเดิมจะไม่ถูกเปลี่ยน`)) return;
+    button.disabled = true;
+    try {
+      setBusy(true, "กำลังปรับรหัสพนักงาน");
+      const result = await window.EmployeeHubDatabase.reorderEmployeeCodesByStartDate();
+      showToast(`ปรับรหัสและลำดับพนักงานสำเร็จ ${result.count} คน`);
+      await refreshData({ quiet: true });
+    } catch (error) {
+      showToast(error.message || "ปรับรหัสพนักงานไม่สำเร็จ", "error", 6500);
+      setSyncStatus("error", "ปรับรหัสไม่สำเร็จ");
+    } finally {
+      button.disabled = false;
+      state.loading = false;
     }
   });
   document.getElementById("previewSeedButton")?.addEventListener("click", () => {
