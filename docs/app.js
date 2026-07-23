@@ -1,5 +1,21 @@
 "use strict";
 
+const APP_RELEASE = Object.freeze({
+  product: "Employee Management Hub",
+  version: "1.0.0",
+  phase: "Phase 10",
+  releaseName: "Production Final Release",
+  releasedAt: "2026-07-23",
+});
+
+const RELEASE_MANUAL_CHECKS = Object.freeze([
+  { id: "workflow", label: "ทดสอบกระบวนการครบวงจร ตั้งแต่กรอกข้อมูลจนรับรองและล็อกรอบเดือน" },
+  { id: "exports", label: "ตรวจ Export CSV และการพิมพ์รายงานจากหน้าที่ใช้งานจริงแล้ว" },
+  { id: "responsive", label: "ตรวจการใช้งานบนคอมพิวเตอร์และมือถือแล้ว" },
+  { id: "backupStored", label: "เก็บ Backup ล่าสุดและค่า SHA-256 ไว้ในพื้นที่ภายในบริษัทแล้ว" },
+  { id: "legacyReadOnly", label: "เก็บ Web/Google Sheets เดิมเป็น Read-only และแยก Migration Archive แล้ว" },
+]);
+
 const VIEW_TITLES = Object.freeze({
   dashboard: "ภาพรวมระบบ",
   executive: "Executive Dashboard",
@@ -159,6 +175,9 @@ const state = {
   systemHealth: null,
   systemLoading: false,
   systemLastBackup: null,
+  productionRelease: null,
+  releaseManualChecks: Object.fromEntries(RELEASE_MANUAL_CHECKS.map((item) => [item.id, false])),
+  releaseSaving: false,
 };
 
 const els = {};
@@ -321,6 +340,10 @@ async function refreshData({ quiet = false } = {}) {
     state.incentives = snapshot.incentives;
     state.evaluationSummary = snapshot.evaluationSummary;
     state.migrationStatus = snapshot.migrationStatus;
+    state.productionRelease = snapshot.productionRelease || null;
+    if (state.productionRelease?.manualChecks) {
+      state.releaseManualChecks = Object.fromEntries(RELEASE_MANUAL_CHECKS.map((item) => [item.id, state.productionRelease.manualChecks?.[item.id] === true]));
+    }
     if (!state.performanceYear) state.performanceYear = snapshot.evaluationSummary.years.at(-1) || new Date().getFullYear() + 543;
     if (!state.performanceEmployeeId) state.performanceEmployeeId = snapshot.employees.find((employee) => employee.isActive)?.id || "";
     if (!state.employee360EmployeeId) state.employee360EmployeeId = snapshot.employees.find((employee) => employee.isActive)?.id || "";
@@ -4135,16 +4158,120 @@ function systemSeverityLabel(severity) {
   return severity === "error" ? "ผิดพลาด" : severity === "warning" ? "ควรตรวจ" : "ข้อมูล";
 }
 
+
+function releaseReadiness() {
+  const health = state.systemHealth;
+  const migrationComplete = Boolean(state.migrationStatus?.migrationId && state.migrationStatus?.workdayMigrationId && state.migrationStatus?.monthlyPerformanceMigrationId);
+  const automatedChecks = {
+    firebaseConfigured: Boolean(window.EmployeeHubDatabase?.isConfigured?.()),
+    adminActive: state.profile?.role === "admin" && state.profile?.isActive !== false,
+    migrationComplete,
+    employeeMasterReady: state.employees.length > 0 && activeEmployees().length > 0,
+    systemHealthOk: Boolean(health && health.status === "ok" && Number(health.errors) === 0 && Number(health.warnings) === 0),
+    backupCreated: Boolean(state.systemLastBackup?.hash && state.systemLastBackup?.fileName),
+  };
+  const automatedRows = [
+    ["firebaseConfigured", "ตั้งค่า Firebase Web App และเชื่อมต่อฐานข้อมูลแล้ว"],
+    ["adminActive", "บัญชีปัจจุบันเป็น Admin และยังเปิดใช้งาน"],
+    ["migrationComplete", "Migration ข้อมูลหลักครบทุกโมดูล"],
+    ["employeeMasterReady", "Employee Master มีพนักงานพร้อมใช้งาน"],
+    ["systemHealthOk", "ผลตรวจสุขภาพล่าสุดไม่มี Error หรือ Warning"],
+    ["backupCreated", "ดาวน์โหลด Backup ใหม่ในรอบการใช้งานนี้แล้ว"],
+  ].map(([id, label]) => ({ id, label, done: automatedChecks[id] }));
+  const manualRows = RELEASE_MANUAL_CHECKS.map((item) => ({ ...item, done: state.releaseManualChecks[item.id] === true }));
+  return {
+    automatedChecks,
+    automatedRows,
+    manualRows,
+    automatedReady: automatedRows.every((item) => item.done),
+    manualReady: manualRows.every((item) => item.done),
+    ready: automatedRows.every((item) => item.done) && manualRows.every((item) => item.done),
+  };
+}
+
+function productionReleaseReport() {
+  const readiness = releaseReadiness();
+  return {
+    reportType: "employee-hub-final-acceptance",
+    product: APP_RELEASE.product,
+    version: APP_RELEASE.version,
+    phase: APP_RELEASE.phase,
+    releaseName: APP_RELEASE.releaseName,
+    generatedAt: new Date().toISOString(),
+    generatedBy: {
+      uid: String(state.user?.uid || ""),
+      email: String(state.user?.email || ""),
+      displayName: String(state.profile?.displayName || ""),
+    },
+    readiness: {
+      ready: readiness.ready,
+      automatedChecks: readiness.automatedChecks,
+      manualChecks: { ...state.releaseManualChecks },
+    },
+    healthSummary: state.systemHealth ? {
+      status: state.systemHealth.status,
+      totalDocuments: state.systemHealth.totalDocuments,
+      errors: state.systemHealth.errors,
+      warnings: state.systemHealth.warnings,
+      info: state.systemHealth.info,
+      checkedAt: state.systemHealth.checkedAt,
+      issues: state.systemHealth.issues,
+    } : null,
+    backup: state.systemLastBackup,
+    storedAcceptance: state.productionRelease,
+    note: "เก็บรายงานนี้พร้อม Backup และค่า SHA-256 ในพื้นที่ภายในบริษัท",
+  };
+}
+
+function downloadProductionReleaseReport() {
+  const report = productionReleaseReport();
+  const fileName = `employee-hub-final-acceptance-v${APP_RELEASE.version}-${new Date().toISOString().slice(0, 10)}.json`;
+  downloadTextFile(fileName, JSON.stringify(report, null, 2));
+  showToast("ดาวน์โหลดรายงานตรวจรับแล้ว");
+}
+
+async function acceptProductionRelease() {
+  if (state.releaseSaving) return;
+  const readiness = releaseReadiness();
+  if (!readiness.ready) {
+    showToast("รายการตรวจรับยังไม่ครบ", "warning");
+    return;
+  }
+  if (!window.confirm(`ยืนยันรับรอง ${APP_RELEASE.product} Production v${APP_RELEASE.version} หรือไม่?`)) return;
+  state.releaseSaving = true;
+  renderSystem();
+  try {
+    state.productionRelease = await window.EmployeeHubDatabase.acceptProductionRelease({
+      releaseVersion: APP_RELEASE.version,
+      manualChecks: { ...state.releaseManualChecks },
+      automatedChecks: readiness.automatedChecks,
+      healthSummary: state.systemHealth,
+      backup: state.systemLastBackup,
+    });
+    renderSystem();
+    downloadProductionReleaseReport();
+    showToast(`รับรอง Production v${APP_RELEASE.version} เรียบร้อยแล้ว`);
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "รับรอง Production ไม่สำเร็จ", "error");
+  } finally {
+    state.releaseSaving = false;
+    renderSystem();
+  }
+}
+
 function renderSystem() {
   const health = state.systemHealth;
   const counts = health?.counts || {};
   const issueRows = health?.issues || [];
   const migrationComplete = Boolean(state.migrationStatus?.migrationId && state.migrationStatus?.workdayMigrationId && state.migrationStatus?.monthlyPerformanceMigrationId);
+  const release = releaseReadiness();
+  const accepted = state.productionRelease?.status === "ACCEPTED" && state.productionRelease?.releaseVersion === APP_RELEASE.version;
   els.systemView.innerHTML = `
     <div class="page-grid">
       <article class="panel score-sync-hero">
         <div class="panel-head">
-          <div><p class="eyebrow">PRODUCTION FINALIZATION</p><h2>ระบบและสำรองข้อมูล</h2><p>ตรวจความสมบูรณ์ของฐานข้อมูลและสร้าง Backup ก่อนเปลี่ยนแปลงข้อมูลสำคัญ</p></div>
+          <div><p class="eyebrow">PRODUCTION v${escapeHtml(APP_RELEASE.version)} · FINAL ACCEPTANCE</p><h2>ระบบและสำรองข้อมูล</h2><p>ตรวจสุขภาพ สำรองข้อมูล และรับรองชุด Production ฉบับส่งมอบสุดท้าย</p></div>
           <span class="badge ${health?.status === "ok" ? "badge-ready" : health?.status === "error" ? "badge-danger" : "badge-progress"}">${health ? (health.status === "ok" ? "ระบบปกติ" : health.status === "error" ? "พบข้อผิดพลาด" : "ควรตรวจสอบ") : "ยังไม่ได้ตรวจ"}</span>
         </div>
         <div class="system-action-grid">
@@ -4184,9 +4311,28 @@ function renderSystem() {
           ].map(([done, text]) => `<div class="production-check"><i data-lucide="${done ? "circle-check-big" : "circle-dashed"}"></i><div><strong>${done ? "เรียบร้อย" : "รอดำเนินการ"}</strong><br>${escapeHtml(text)}</div></div>`).join("")}
         </div>
       </article>
+
+      <article class="panel release-acceptance-panel">
+        <div class="panel-head"><div><p class="eyebrow">FINAL ACCEPTANCE & RELEASE</p><h2>ตรวจรับ Production v${escapeHtml(APP_RELEASE.version)}</h2><p>ระบบจะบันทึกผลรับรองไว้ใน Firestore และ Audit Log พร้อมสร้างรายงานส่งมอบสำหรับเก็บภายในบริษัท</p></div><span class="badge ${accepted ? "badge-ready" : release.ready ? "badge-progress" : "badge-planned"}">${accepted ? "รับรองแล้ว" : release.ready ? "พร้อมรับรอง" : "รอตรวจครบ"}</span></div>
+        ${accepted ? `<div class="notice notice-success release-accepted-notice"><i data-lucide="badge-check"></i><div><strong>Production v${escapeHtml(state.productionRelease.releaseVersion)} ได้รับการรับรองแล้ว</strong><br>รับรองเมื่อ ${escapeHtml(formatDate(state.productionRelease.acceptedAt))} โดย ${escapeHtml(state.productionRelease.acceptedByEmail || state.productionRelease.acceptedBy)}<br><small>การรับรองซ้ำหลังมีการเปลี่ยนแปลงจะสร้าง Audit Log รายการใหม่</small></div></div>` : ""}
+        <div class="release-grid">
+          <section class="release-check-section"><h3><i data-lucide="cpu"></i> ตรวจอัตโนมัติ</h3><div class="release-check-list">${release.automatedRows.map((item) => `<div class="release-check-row ${item.done ? "is-done" : "is-pending"}"><i data-lucide="${item.done ? "circle-check-big" : "circle-dashed"}"></i><span>${escapeHtml(item.label)}</span><strong>${item.done ? "ผ่าน" : "รอดำเนินการ"}</strong></div>`).join("")}</div></section>
+          <section class="release-check-section"><h3><i data-lucide="clipboard-check"></i> ยืนยันด้วยตนเอง</h3><div class="release-check-list">${release.manualRows.map((item) => `<label class="release-manual-row ${item.done ? "is-done" : ""}"><input type="checkbox" data-release-check="${escapeHtml(item.id)}" ${item.done ? "checked" : ""}/><span>${escapeHtml(item.label)}</span></label>`).join("")}</div></section>
+        </div>
+        <div class="release-actions">
+          <div><strong>${release.ready ? "พร้อมรับรอง Production" : `เหลือ ${release.automatedRows.filter((item) => !item.done).length + release.manualRows.filter((item) => !item.done).length} รายการ`}</strong><br><small>รายงานตรวจรับไม่มีรหัสผ่านหรือ Service Account แต่มีข้อมูลสรุปภายในบริษัท</small></div>
+          <div class="panel-actions"><button id="downloadReleaseReport" class="button button-secondary" type="button"><i data-lucide="file-down"></i>ดาวน์โหลดรายงาน</button><button id="acceptProductionRelease" class="button button-primary" type="button" ${release.ready && !state.releaseSaving ? "" : "disabled"}><i data-lucide="badge-check"></i>${state.releaseSaving ? "กำลังรับรอง..." : accepted ? "รับรอง Production ซ้ำ" : "รับรอง Production 1.0"}</button></div>
+        </div>
+      </article>
     </div>`;
   document.getElementById("runSystemHealth")?.addEventListener("click", () => refreshSystemHealth());
   document.getElementById("downloadSystemBackup")?.addEventListener("click", createAndDownloadSystemBackup);
+  els.systemView.querySelectorAll("[data-release-check]").forEach((input) => input.addEventListener("change", () => {
+    state.releaseManualChecks[input.dataset.releaseCheck] = input.checked;
+    renderSystem();
+  }));
+  document.getElementById("downloadReleaseReport")?.addEventListener("click", downloadProductionReleaseReport);
+  document.getElementById("acceptProductionRelease")?.addEventListener("click", acceptProductionRelease);
   ensureIcons();
 }
 

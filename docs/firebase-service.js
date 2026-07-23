@@ -1600,16 +1600,113 @@
     }
   }
 
+
+  function productionReleaseFromSnapshot(snapshot) {
+    if (!snapshot?.exists()) return null;
+    const row = snapshot.data();
+    return {
+      id: snapshot.id,
+      releaseVersion: String(row.releaseVersion || ""),
+      phase: String(row.phase || ""),
+      status: String(row.status || ""),
+      manualChecks: row.manualChecks && typeof row.manualChecks === "object" ? row.manualChecks : {},
+      automatedChecks: row.automatedChecks && typeof row.automatedChecks === "object" ? row.automatedChecks : {},
+      healthSummary: row.healthSummary && typeof row.healthSummary === "object" ? row.healthSummary : {},
+      backup: row.backup && typeof row.backup === "object" ? row.backup : {},
+      acceptedAt: toIso(row.acceptedAt),
+      acceptedBy: String(row.acceptedBy || ""),
+      acceptedByEmail: String(row.acceptedByEmail || ""),
+      updatedAt: toIso(row.updatedAt),
+      updatedBy: String(row.updatedBy || ""),
+    };
+  }
+
+  async function loadProductionRelease() {
+    assertReady();
+    try {
+      const snapshot = await firestoreApi.getDoc(firestoreApi.doc(db, "hubSettings", "productionRelease"));
+      return productionReleaseFromSnapshot(snapshot);
+    } catch (error) {
+      throw friendlyError(error, "อ่านสถานะ Production Release ไม่สำเร็จ");
+    }
+  }
+
+  async function acceptProductionRelease(input = {}) {
+    assertReady();
+    const uid = currentUid();
+    const releaseVersion = String(input.releaseVersion || "").trim();
+    if (releaseVersion !== "1.0.0") throw new Error("รองรับการรับรอง Production v1.0.0 เท่านั้น");
+
+    const requiredManualKeys = ["workflow", "exports", "responsive", "backupStored", "legacyReadOnly"];
+    const manualChecks = Object.fromEntries(requiredManualKeys.map((key) => [key, input.manualChecks?.[key] === true]));
+    if (!requiredManualKeys.every((key) => manualChecks[key])) throw new Error("กรุณายืนยันรายการตรวจรับด้วยตนเองให้ครบ");
+
+    const requiredAutomatedKeys = ["firebaseConfigured", "adminActive", "migrationComplete", "employeeMasterReady", "systemHealthOk", "backupCreated"];
+    const automatedChecks = Object.fromEntries(requiredAutomatedKeys.map((key) => [key, input.automatedChecks?.[key] === true]));
+    if (!requiredAutomatedKeys.every((key) => automatedChecks[key])) throw new Error("รายการตรวจอัตโนมัติยังไม่ครบ จึงยังรับรอง Production ไม่ได้");
+
+    const releaseRef = firestoreApi.doc(db, "hubSettings", "productionRelease");
+    const beforeSnapshot = await firestoreApi.getDoc(releaseRef);
+    const before = beforeSnapshot.exists() ? beforeSnapshot.data() : null;
+    const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+    const healthSummary = {
+      status: String(input.healthSummary?.status || ""),
+      totalDocuments: Math.max(0, Math.trunc(Number(input.healthSummary?.totalDocuments) || 0)),
+      errors: Math.max(0, Math.trunc(Number(input.healthSummary?.errors) || 0)),
+      warnings: Math.max(0, Math.trunc(Number(input.healthSummary?.warnings) || 0)),
+      checkedAt: String(input.healthSummary?.checkedAt || ""),
+    };
+    const backup = {
+      fileName: String(input.backup?.fileName || "").slice(0, 240),
+      hash: String(input.backup?.hash || "").slice(0, 128),
+      bytes: Math.max(0, Math.trunc(Number(input.backup?.bytes) || 0)),
+      createdAt: String(input.backup?.createdAt || ""),
+    };
+    const payload = {
+      releaseVersion,
+      phase: "PHASE_10",
+      status: "ACCEPTED",
+      manualChecks,
+      automatedChecks,
+      healthSummary,
+      backup,
+      acceptedAt: firestoreApi.serverTimestamp(),
+      acceptedBy: uid,
+      acceptedByEmail: String(auth.currentUser?.email || ""),
+      updatedAt: firestoreApi.serverTimestamp(),
+      updatedBy: uid,
+    };
+
+    try {
+      const batch = firestoreApi.writeBatch(db);
+      batch.set(releaseRef, payload);
+      batch.set(auditRef, {
+        actorId: uid,
+        action: "ACCEPT_PRODUCTION_RELEASE",
+        targetType: "hubSettings",
+        targetId: "productionRelease",
+        before,
+        after: { ...payload, acceptedAt: null, updatedAt: null },
+        createdAt: firestoreApi.serverTimestamp(),
+      });
+      await batch.commit();
+      return await loadProductionRelease();
+    } catch (error) {
+      throw friendlyError(error, "รับรอง Production Release ไม่สำเร็จ");
+    }
+  }
+
   async function loadHubSnapshot(yearMonth = "") {
     assertReady();
     try {
-      const [employees, incentives, evaluationSummary, migrationStatus] = await Promise.all([
+      const [employees, incentives, evaluationSummary, migrationStatus, productionRelease] = await Promise.all([
         loadEmployees(),
         loadServiceIncentives(yearMonth),
         loadEvaluationSummary(),
         getMigrationStatus(),
+        loadProductionRelease(),
       ]);
-      return { employees, incentives, evaluationSummary, migrationStatus };
+      return { employees, incentives, evaluationSummary, migrationStatus, productionRelease };
     } catch (error) {
       throw friendlyError(error, "โหลดข้อมูล Employee Hub ไม่สำเร็จ");
     }
@@ -2120,6 +2217,8 @@
     deleteMonthlyPerformanceOverride,
     setMonthlyPerformanceMonthStatus,
     loadAuditLogs,
+    loadProductionRelease,
+    acceptProductionRelease,
     loadSystemSnapshot,
     createSystemBackup,
   });
