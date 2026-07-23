@@ -7,6 +7,7 @@ const VIEW_TITLES = Object.freeze({
   performance: "Performance Summary",
   workday: "Workday Insight",
   monthly: "Monthly Performance",
+  closing: "ศูนย์ปิดรอบเดือน",
   system: "ระบบและสำรองข้อมูล",
 });
 
@@ -115,6 +116,10 @@ const state = {
   monthlyEditingId: "",
   monthlyHistoryEmployeeId: "",
   monthlyHistoryDate: "",
+  closingMonth: currentYearMonth(),
+  closingData: null,
+  closingDataKey: "",
+  closingLoading: false,
   systemSnapshot: null,
   systemHealth: null,
   systemLoading: false,
@@ -128,7 +133,7 @@ function cacheElements() {
     "authGate", "authMessage", "loginForm", "loginEmail", "loginPassword", "loginButton", "authConfigHelp",
     "appShell", "mobileNav", "pageTitle", "databaseStatusDot", "databaseStatusLabel", "accountName", "accountRole",
     "logoutButton", "refreshButton", "syncBadge", "dashboardView", "employeesView", "serviceView", "performanceView",
-    "workdayView", "monthlyView", "systemView", "modalRoot", "toastRegion",
+    "workdayView", "monthlyView", "closingView", "systemView", "modalRoot", "toastRegion",
   ].forEach((id) => { els[id] = document.getElementById(id); });
 }
 
@@ -260,6 +265,7 @@ function showView(viewName) {
   if (viewName === "performance") void refreshPerformanceData();
   if (viewName === "workday") void refreshWorkdayData();
   if (viewName === "monthly") void refreshMonthlyData();
+  if (viewName === "closing") void refreshClosingData({ force: true, quiet: true });
   if (viewName === "system") void refreshSystemHealth({ quiet: true });
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -302,6 +308,7 @@ function renderCurrentView() {
     performance: renderPerformance,
     workday: renderWorkday,
     monthly: renderMonthly,
+    closing: renderClosing,
     system: renderSystem,
   };
   renderers[state.currentView]?.();
@@ -360,6 +367,7 @@ function renderDashboard() {
         ${moduleCard({ icon: "chart-no-axes-combined", title: "Performance Summary", description: "บันทึกคะแนน KPI ประวัติ รายงาน และ Employee 360° ใน Web เดียว", status: "ใช้งานได้", statusClass: "badge-ready", view: "performance" })}
         ${moduleCard({ icon: "calendar-clock", title: "Workday Insight", description: "เวลาสายรายเดือน วันลา และสรุปสิทธิ์", status: workdayReady ? "ใช้งานได้" : "ยังไม่มีข้อมูล", statusClass: workdayReady ? "badge-ready" : "badge-progress", view: "workday" })}
         ${moduleCard({ icon: "clipboard-check", title: "Monthly Performance", description: "คะแนนรายวัน สถานะการทำงาน วันทำงานจริง และการปิดเดือน", status: state.migrationStatus?.monthlyPerformanceMigrationId ? "ใช้งานได้" : "ยังไม่มีข้อมูล", statusClass: state.migrationStatus?.monthlyPerformanceMigrationId ? "badge-ready" : "badge-progress", view: "monthly" })}
+        ${moduleCard({ icon: "calendar-check-2", title: "ศูนย์ปิดรอบเดือน", description: "ตรวจ Workday, Monthly, Score Sync, กฎระเบียบ และ Service Incentive ในหน้าเดียว", status: "พร้อมตรวจ", statusClass: "badge-ready", view: "closing" })}
         ${moduleCard({ icon: "shield-check", title: "ระบบและสำรองข้อมูล", description: "ตรวจความสมบูรณ์ของข้อมูล ดาวน์โหลด Backup และตรวจรายการ Production", status: state.systemHealth?.status === "ok" ? "ระบบปกติ" : "พร้อมตรวจ", statusClass: state.systemHealth?.status === "ok" ? "badge-ready" : "badge-progress", view: "system" })}
       </div>
 
@@ -930,8 +938,7 @@ async function refreshPerformanceSyncData({ force = false, quiet = false } = {})
   }
 }
 
-function buildPerformanceSyncRows() {
-  const data = state.performanceSyncData;
+function buildPerformanceSyncRowsFromData(data, performanceMonth = state.performanceMonth, employees = sortedActiveEmployees()) {
   if (!data) return [];
   const monthly = calculateMonthlySummaryFromData(data.monthlyEntries || [], data.monthlyOverrides || [], state.employees);
   const monthlyByEmployee = new Map(monthly.rows.map((row) => [row.employeeId, row]));
@@ -945,10 +952,10 @@ function buildPerformanceSyncRows() {
   const overrideByEmployee = new Map((data.monthlyOverrides || []).map((row) => [row.employeeId, row]));
   const monthClosed = String(data.monthStatus?.status || "OPEN") === "CLOSED";
 
-  return sortedActiveEmployees().map((employee) => {
+  return employees.map((employee) => {
     const monthlyRow = monthlyByEmployee.get(employee.id) || null;
     const attendance = attendanceByEmployee.get(employee.id) || null;
-    const evaluation = evaluationByEmployee.get(employee.id) || performanceRecord(employee.id, state.performanceMonth);
+    const evaluation = evaluationByEmployee.get(employee.id) || (performanceMonth === state.performanceMonth ? performanceRecord(employee.id, performanceMonth) : null);
     const monthlyScores = monthlyRow
       ? ["C1", "C2", "C3", "C4"].map((criterionId) => Number(monthlyRow.criteria?.[criterionId]?.incentivePercent))
       : [];
@@ -1006,6 +1013,11 @@ function buildPerformanceSyncRows() {
       disciplinePending: evaluation ? evaluation.disciplinePending === true : true,
     };
   });
+}
+
+
+function buildPerformanceSyncRows() {
+  return buildPerformanceSyncRowsFromData(state.performanceSyncData, state.performanceMonth, sortedActiveEmployees());
 }
 
 function performanceSyncStatusBadge(status) {
@@ -1967,10 +1979,13 @@ function calculateMonthlySummary() {
   return calculateMonthlySummaryFromData(state.monthlyEntries, state.monthlyOverrides, state.employees);
 }
 
-function validateMonthlyData() {
+function validateMonthlyDataRecords(entries, overrides, employees, monthKey) {
+  const safeEntries = Array.isArray(entries) ? entries : [];
+  const safeOverrides = Array.isArray(overrides) ? overrides : [];
+  const safeEmployees = Array.isArray(employees) ? employees : [];
   const issues = [];
-  const employeeIds = new Set(state.employees.map((employee) => employee.id));
-  state.monthlyEntries.forEach((entry) => {
+  const employeeIds = new Set(safeEmployees.map((employee) => employee.id));
+  safeEntries.forEach((entry) => {
     const status = monthlyStatusDefinition(entry.status);
     const scoreValues = Object.values(entry.scores || {}).filter((value) => value !== "" && value !== null && value !== undefined);
     if (!employeeIds.has(entry.employeeId)) issues.push({ severity: "ERROR", code: "UNKNOWN_EMPLOYEE", message: "ไม่พบพนักงานใน Employee Master", details: entry });
@@ -1984,18 +1999,22 @@ function validateMonthlyData() {
       if (!validCurrent && !validLegacy) issues.push({ severity: "WARNING", code: "LEGACY_SCORE_OUT_OF_RANGE", message: "คะแนนอยู่นอกช่วงปัจจุบัน", details: { entryId: entry.id, score: numeric } });
     });
   });
-  const calculated = calculateMonthlySummary();
+  const calculated = calculateMonthlySummaryFromData(safeEntries, safeOverrides, safeEmployees);
   calculated.rows.forEach((row) => {
     const totalScore = MONTHLY_CRITERIA.reduce((sum, criterion) => sum + Number(row.criteria[criterion.id].totalScore || 0), 0);
     if (row.actualWorkDays === 0 && totalScore !== 0) issues.push({ severity: "ERROR", code: "SCORE_WITH_ZERO_WORKDAYS", message: "มีคะแนนแต่วันทำงานจริงเป็น 0", details: { employeeId: row.employeeId } });
     if (row.isOverridden && row.actualWorkDays !== row.autoWorkDays) issues.push({ severity: "INFO", code: "WORKDAY_OVERRIDE", message: "วันทำงานจริงถูกกำหนดเองและต่างจาก Auto", details: { employeeId: row.employeeId, autoWorkDays: row.autoWorkDays, actualWorkDays: row.actualWorkDays } });
   });
-  activeEmployees().forEach((employee) => {
-    if (!state.monthlyEntries.some((entry) => entry.employeeId === employee.id)) issues.push({ severity: "WARNING", code: "NO_MONTH_DATA", message: "พนักงานไม่มีข้อมูลในเดือนนี้", details: { employeeId: employee.id } });
+  safeEmployees.filter((employee) => employee.isActive).forEach((employee) => {
+    if (!safeEntries.some((entry) => entry.employeeId === employee.id)) issues.push({ severity: "WARNING", code: "NO_MONTH_DATA", message: "พนักงานไม่มีข้อมูลในเดือนนี้", details: { employeeId: employee.id } });
   });
   const counts = { error: 0, warning: 0, info: 0 };
   issues.forEach((issue) => { counts[issue.severity.toLowerCase()] += 1; });
-  return { monthKey: state.monthlyMonth, checkedAt: new Date().toISOString(), passed: counts.error === 0, counts, totalIssues: issues.length, issues };
+  return { monthKey, checkedAt: new Date().toISOString(), passed: counts.error === 0, counts, totalIssues: issues.length, issues };
+}
+
+function validateMonthlyData() {
+  return validateMonthlyDataRecords(state.monthlyEntries, state.monthlyOverrides, state.employees, state.monthlyMonth);
 }
 
 async function refreshMonthlyData({ force = false, quiet = false } = {}) {
@@ -2401,6 +2420,263 @@ function exportMonthlyEntriesCsv() {
   state.monthlyEntries.filter((entry) => !state.monthlyHistoryEmployeeId || entry.employeeId === state.monthlyHistoryEmployeeId).filter((entry) => !state.monthlyHistoryDate || entry.date === state.monthlyHistoryDate).forEach((entry) => { const employee = employeesById.get(entry.employeeId); rows.push([entry.date, employee?.employeeCode || "", employee?.fullName || entry.employeeId, monthlyStatusLabel(entry.status), ...MONTHLY_CRITERIA.map((criterion) => entry.scores?.[criterion.id] ?? ""), entry.note, entry.legacyException ? "ใช่" : "ไม่", entry.updatedAt]); });
   downloadCsv(rows, `monthly-performance-entries-${state.monthlyMonth}.csv`);
 }
+
+
+/* Phase 6 · Month-End Closing Center */
+function closingMonthParts(yearMonth = state.closingMonth) {
+  const match = /^(\d{4})-(\d{2})$/.exec(String(yearMonth || ""));
+  const year = match ? Number(match[1]) : new Date().getFullYear();
+  const month = match ? Number(match[2]) : new Date().getMonth() + 1;
+  return { year, month, performanceYear: year + 543, performanceMonth: month - 1 };
+}
+
+function employeesEligibleForMonth(yearMonth = state.closingMonth) {
+  const { year, month } = closingMonthParts(yearMonth);
+  const monthEnd = `${year}-${String(month).padStart(2, "0")}-${String(new Date(year, month, 0).getDate()).padStart(2, "0")}`;
+  return sortedActiveEmployees().filter((employee) => !employee.startDate || String(employee.startDate).slice(0, 10) <= monthEnd);
+}
+
+async function refreshClosingData({ force = false, quiet = false } = {}) {
+  if (!state.user || !state.closingMonth) return;
+  const key = state.closingMonth;
+  if (!force && state.closingDataKey === key && state.closingData) return;
+  state.closingLoading = true;
+  if (!quiet) setSyncStatus("syncing", "กำลังตรวจรอบเดือน");
+  if (state.currentView === "closing") renderClosing();
+  try {
+    const [syncSnapshot, incentives] = await Promise.all([
+      window.EmployeeHubDatabase.loadPerformanceScoreSyncSnapshot(key),
+      window.EmployeeHubDatabase.loadServiceIncentives(key),
+    ]);
+    state.closingData = { syncSnapshot, incentives };
+    state.closingDataKey = key;
+    setSyncStatus("online", "เชื่อมต่อแล้ว");
+  } catch (error) {
+    console.error(error);
+    setSyncStatus("error", "ตรวจรอบเดือนไม่สำเร็จ");
+    if (!quiet) showToast(error.message || "โหลดข้อมูลปิดรอบเดือนไม่สำเร็จ", "error", 6500);
+  } finally {
+    state.closingLoading = false;
+    if (state.currentView === "closing") renderClosing();
+  }
+}
+
+function buildClosingSummary() {
+  const data = state.closingData;
+  if (!data?.syncSnapshot) return null;
+  const eligibleEmployees = employeesEligibleForMonth(state.closingMonth);
+  const eligibleIds = new Set(eligibleEmployees.map((employee) => employee.id));
+  const snapshot = data.syncSnapshot;
+  const { performanceMonth } = closingMonthParts(state.closingMonth);
+  const syncRows = buildPerformanceSyncRowsFromData(snapshot, performanceMonth, eligibleEmployees);
+  const attendanceByEmployee = new Map((snapshot.attendance || []).filter((row) => eligibleIds.has(row.employeeId)).map((row) => [row.employeeId, row]));
+  const monthlyEmployeeIds = new Set((snapshot.monthlyEntries || []).filter((row) => eligibleIds.has(row.employeeId)).map((row) => row.employeeId));
+  const incentiveByEmployee = new Map((data.incentives || []).filter((row) => eligibleIds.has(row.employeeId)).map((row) => [row.employeeId, row]));
+  const validationEmployees = state.employees.map((employee) => ({ ...employee, isActive: eligibleIds.has(employee.id) }));
+  const validation = validateMonthlyDataRecords(snapshot.monthlyEntries || [], snapshot.monthlyOverrides || [], validationEmployees, state.closingMonth);
+  const monthClosed = String(snapshot.monthStatus?.status || "OPEN") === "CLOSED";
+  const attendanceIsValid = (record) => { const score = Number(record?.lateScore); return Boolean(record) && Number.isInteger(score) && score >= 20 && score <= 100 && score % 5 === 0; };
+  const disciplineIsValid = (row) => { const score = Number(row?.evaluation?.scores?.[5]); return Boolean(row?.evaluation) && row.disciplinePending !== true && Number.isInteger(score) && score >= 20 && score <= 100 && score % 5 === 0; };
+  const attendanceComplete = eligibleEmployees.filter((employee) => attendanceIsValid(attendanceByEmployee.get(employee.id))).length;
+  const monthlyComplete = eligibleEmployees.filter((employee) => monthlyEmployeeIds.has(employee.id)).length;
+  const syncedCount = syncRows.filter((row) => row.status === "SYNCED").length;
+  const disciplineCount = syncRows.filter(disciplineIsValid).length;
+  const incentiveCount = eligibleEmployees.filter((employee) => incentiveByEmployee.has(employee.id)).length;
+  const requiredSteps = [
+    {
+      id: "workday",
+      icon: "clock-3",
+      title: "1. Workday Insight",
+      description: "บันทึกคะแนนเวลาของพนักงานประจำเดือน",
+      done: eligibleEmployees.length > 0 && attendanceComplete === eligibleEmployees.length,
+      count: `${attendanceComplete}/${eligibleEmployees.length}`,
+      actionLabel: "เปิด Workday",
+    },
+    {
+      id: "monthly",
+      icon: "clipboard-check",
+      title: "2. Monthly Performance",
+      description: `ข้อมูลครบ ${monthlyComplete}/${eligibleEmployees.length} คน · ตรวจพบ Error ${validation.counts.error}`,
+      done: monthClosed && validation.passed && monthlyComplete === eligibleEmployees.length,
+      count: monthClosed ? "CLOSED" : String(snapshot.monthStatus?.status || "OPEN"),
+      actionLabel: "ควบคุมเดือน",
+    },
+    {
+      id: "sync",
+      icon: "send",
+      title: "3. เชื่อมคะแนน",
+      description: "ส่ง Inc. 1–4 และคะแนนเวลาไป Performance Summary",
+      done: eligibleEmployees.length > 0 && syncedCount === eligibleEmployees.length,
+      count: `${syncedCount}/${eligibleEmployees.length}`,
+      actionLabel: "เปิด Score Sync",
+    },
+    {
+      id: "discipline",
+      icon: "shield-check",
+      title: "4. กฎระเบียบบริษัท",
+      description: "กรอกคะแนนหัวข้อที่ 6 ด้วยตนเองให้ครบ",
+      done: eligibleEmployees.length > 0 && disciplineCount === eligibleEmployees.length,
+      count: `${disciplineCount}/${eligibleEmployees.length}`,
+      actionLabel: "กรอกคะแนน",
+    },
+  ];
+  const recommendedSteps = [
+    {
+      id: "service",
+      icon: "badge-dollar-sign",
+      title: "Service Incentive",
+      description: "ตรวจว่ามีพนักงานครบทุกคน แม้ยอดเดือนนั้นเป็น 0",
+      done: eligibleEmployees.length > 0 && incentiveCount === eligibleEmployees.length,
+      count: `${incentiveCount}/${eligibleEmployees.length}`,
+      actionLabel: "เปิด Incentive",
+    },
+    {
+      id: "system",
+      icon: "database-backup",
+      title: "Backup หลังปิดรอบ",
+      description: "สำรอง Firestore หลังข้อมูลเดือนนี้เรียบร้อย",
+      done: Boolean(state.systemLastBackup),
+      count: state.systemLastBackup ? "สำรองแล้ว" : "แนะนำ",
+      actionLabel: "เปิด Backup",
+    },
+  ];
+  const requiredDone = requiredSteps.filter((step) => step.done).length;
+  const coreReady = requiredDone === requiredSteps.length;
+  const operationalDone = [...requiredSteps, ...recommendedSteps].filter((step) => step.done).length;
+  const employees = eligibleEmployees.map((employee) => {
+    const syncRow = syncRows.find((row) => row.employee.id === employee.id);
+    const attendance = attendanceByEmployee.get(employee.id) || null;
+    const monthly = monthlyEmployeeIds.has(employee.id);
+    const incentive = incentiveByEmployee.get(employee.id) || null;
+    return {
+      employee,
+      attendance,
+      monthly,
+      syncRow,
+      incentive,
+      attendanceDone: attendanceIsValid(attendance),
+      disciplineDone: disciplineIsValid(syncRow),
+    };
+  });
+  return {
+    eligibleEmployees,
+    validation,
+    monthClosed,
+    requiredSteps,
+    recommendedSteps,
+    requiredDone,
+    operationalDone,
+    coreReady,
+    employees,
+    counts: { attendanceComplete, monthlyComplete, syncedCount, disciplineCount, incentiveCount },
+  };
+}
+
+function closingStatusBadge(done, required = true) {
+  if (done) return '<span class="badge badge-ready">เรียบร้อย</span>';
+  return required ? '<span class="badge badge-danger">รอดำเนินการ</span>' : '<span class="badge badge-progress">แนะนำ</span>';
+}
+
+function renderClosingStep(step, required = true) {
+  return `<article class="closing-step-card ${step.done ? "closing-step-done" : ""}">
+    <div class="closing-step-icon"><i data-lucide="${escapeHtml(step.icon)}"></i></div>
+    <div class="closing-step-content"><div class="closing-step-title"><h3>${escapeHtml(step.title)}</h3>${closingStatusBadge(step.done, required)}</div><p>${escapeHtml(step.description)}</p><strong>${escapeHtml(step.count)}</strong></div>
+    <button class="button button-small ${step.done ? "button-ghost" : "button-secondary"} closing-step-action" data-closing-action="${escapeHtml(step.id)}" type="button">${escapeHtml(step.actionLabel)} <i data-lucide="arrow-right"></i></button>
+  </article>`;
+}
+
+function closingCellBadge(done, doneText = "ครบ", pendingText = "ขาด") {
+  return `<span class="badge ${done ? "badge-ready" : "badge-danger"}">${done ? doneText : pendingText}</span>`;
+}
+
+function renderClosing() {
+  const summary = buildClosingSummary();
+  const firstLoading = state.closingLoading && !summary;
+  els.closingView.innerHTML = `
+    <div class="page-grid">
+      <article class="panel closing-hero">
+        <div class="panel-head"><div><p class="eyebrow">MONTH-END CONTROL</p><h2>ศูนย์ปิดรอบเดือน</h2><p>ตรวจขั้นตอนสำคัญก่อนสรุปคะแนนและสำรองข้อมูลประจำเดือน</p></div>${summary ? `<span class="badge ${summary.coreReady ? "badge-ready" : "badge-danger"}">${summary.coreReady ? "รอบประเมินพร้อม" : "ยังมีรายการค้าง"}</span>` : `<span class="badge badge-progress">กำลังตรวจ</span>`}</div>
+        <div class="closing-toolbar"><div class="field compact-field"><label for="closingMonthPicker">เดือนที่ตรวจ</label><input id="closingMonthPicker" type="month" value="${escapeHtml(state.closingMonth)}" /></div><div class="panel-actions"><button id="refreshClosingButton" class="button button-secondary" type="button"><i data-lucide="refresh-cw"></i>ตรวจใหม่</button><button id="exportClosingButton" class="button button-primary" type="button" ${summary ? "" : "disabled"}><i data-lucide="download"></i>Export สถานะ</button></div></div>
+        ${summary ? `<div class="kpi-grid compact-kpi-grid closing-kpis"><article class="kpi-card"><div class="kpi-head"><span>ขั้นตอนจำเป็น</span><span class="kpi-icon"><i data-lucide="list-checks"></i></span></div><div class="kpi-value">${summary.requiredDone}/4</div><div class="kpi-note">ต้องครบก่อนสรุปรอบประเมิน</div></article><article class="kpi-card"><div class="kpi-head"><span>พนักงานในรอบ</span><span class="kpi-icon"><i data-lucide="users-round"></i></span></div><div class="kpi-value">${summary.eligibleEmployees.length}</div><div class="kpi-note">อ้างอิงวันที่เริ่มงาน</div></article><article class="kpi-card"><div class="kpi-head"><span>Monthly Error</span><span class="kpi-icon"><i data-lucide="triangle-alert"></i></span></div><div class="kpi-value ${summary.validation.counts.error ? "negative" : ""}">${summary.validation.counts.error}</div><div class="kpi-note">คำเตือน ${summary.validation.counts.warning}</div></article><article class="kpi-card"><div class="kpi-head"><span>งานทั้งหมด</span><span class="kpi-icon"><i data-lucide="gauge"></i></span></div><div class="kpi-value">${summary.operationalDone}/6</div><div class="kpi-note">รวม Incentive และ Backup</div></article></div>` : ""}
+      </article>
+      ${firstLoading ? `<div class="loading-skeleton"></div>` : summary ? `
+      <article class="panel"><div class="panel-head"><div><h2>ขั้นตอนจำเป็น</h2><p>ระบบจะถือว่ารอบประเมินพร้อมเมื่อครบทั้ง 4 ขั้นตอน</p></div></div><div class="closing-step-grid">${summary.requiredSteps.map((step) => renderClosingStep(step, true)).join("")}</div></article>
+      <article class="panel"><div class="panel-head"><div><h2>รายการแนะนำหลังปิดรอบ</h2><p>ไม่บล็อกการสรุปคะแนน แต่ช่วยให้ข้อมูลประจำเดือนสมบูรณ์และกู้คืนได้</p></div></div><div class="closing-step-grid">${summary.recommendedSteps.map((step) => renderClosingStep(step, false)).join("")}</div></article>
+      <article class="panel"><div class="panel-head"><div><h2>ตรวจรายบุคคล</h2><p>ค้นหารายการที่ยังขาดได้ในตารางเดียว</p></div></div><div class="table-wrap closing-matrix"><table><thead><tr><th>พนักงาน</th><th>Workday</th><th>Monthly</th><th>Score Sync</th><th>กฎระเบียบ</th><th>Incentive</th></tr></thead><tbody>${summary.employees.map((row) => `<tr><td><strong>${escapeHtml(row.employee.employeeCode)}</strong><br><small>${escapeHtml(row.employee.fullName)}</small></td><td>${closingCellBadge(row.attendanceDone, row.attendance ? `${row.attendance.lateScore} คะแนน` : "ครบ", row.attendance ? "คะแนนไม่ถูกต้อง" : "ไม่มีข้อมูล")}</td><td>${closingCellBadge(row.monthly, "มีข้อมูล", "ไม่มีข้อมูล")}</td><td><span class="badge ${performanceSyncStatusBadge(row.syncRow?.status)}">${escapeHtml(row.syncRow?.reason || "ยังไม่มีข้อมูล")}</span></td><td>${closingCellBadge(row.disciplineDone, row.syncRow?.evaluation?.scores?.[5] ? `${row.syncRow.evaluation.scores[5]} คะแนน` : "กรอกแล้ว", "รอกรอก")}</td><td>${closingCellBadge(Boolean(row.incentive), row.incentive ? formatMoney(row.incentive.totalAmount) : "ครบ", "ไม่มีรายการ")}</td></tr>`).join("") || `<tr><td colspan="6"><div class="empty-state"><i data-lucide="users"></i><p>ไม่พบพนักงานสำหรับเดือนนี้</p></div></td></tr>`}</tbody></table></div></article>
+      ` : `<article class="panel"><div class="empty-state"><i data-lucide="calendar-search"></i><p>กำลังโหลดข้อมูลสำหรับปิดรอบเดือน</p></div></article>`}
+    </div>`;
+
+  document.getElementById("closingMonthPicker")?.addEventListener("change", (event) => {
+    state.closingMonth = event.target.value || currentYearMonth();
+    state.closingData = null;
+    state.closingDataKey = "";
+    void refreshClosingData({ force: true });
+  });
+  document.getElementById("refreshClosingButton")?.addEventListener("click", () => refreshClosingData({ force: true }));
+  document.getElementById("exportClosingButton")?.addEventListener("click", exportClosingStatusCsv);
+  els.closingView.querySelectorAll(".closing-step-action").forEach((button) => button.addEventListener("click", () => openClosingAction(button.dataset.closingAction, summary)));
+  ensureIcons();
+}
+
+function openClosingAction(action, summary = buildClosingSummary()) {
+  const { year, performanceYear, performanceMonth } = closingMonthParts(state.closingMonth);
+  if (action === "workday") {
+    state.workdayMonth = state.closingMonth;
+    state.workdayYear = year;
+    state.workdayTab = "attendance";
+    state.workdayDataKey = "";
+    return showView("workday");
+  }
+  if (action === "monthly") {
+    state.monthlyMonth = state.closingMonth;
+    state.monthlyDate = `${state.closingMonth}-01`;
+    state.monthlyTab = "control";
+    state.monthlyDataKey = "";
+    return showView("monthly");
+  }
+  if (action === "sync") {
+    state.performanceYear = performanceYear;
+    state.performanceMonth = performanceMonth;
+    state.performanceTab = "sync";
+    state.performanceSyncKey = "";
+    return showView("performance");
+  }
+  if (action === "discipline") {
+    const pending = summary?.employees?.find((row) => !row.disciplineDone);
+    state.performanceYear = performanceYear;
+    state.performanceMonth = performanceMonth;
+    state.performanceEmployeeId = pending?.employee?.id || summary?.eligibleEmployees?.[0]?.id || state.performanceEmployeeId;
+    state.performanceTab = "entry";
+    state.performanceManualOverride = false;
+    return showView("performance");
+  }
+  if (action === "service") {
+    state.serviceMonth = state.closingMonth;
+    state.serviceEmployeeId = "";
+    return showView("service");
+  }
+  if (action === "system") return showView("system");
+}
+
+function exportClosingStatusCsv() {
+  const summary = buildClosingSummary();
+  if (!summary) return showToast("ยังไม่มีข้อมูลสำหรับ Export", "warning");
+  const rows = [["เดือน", "รหัสพนักงาน", "ชื่อพนักงาน", "Workday", "คะแนนเวลา", "Monthly", "Score Sync", "กฎระเบียบ", "คะแนนกฎระเบียบ", "Service Incentive"]];
+  summary.employees.forEach((row) => rows.push([
+    state.closingMonth,
+    row.employee.employeeCode,
+    row.employee.fullName,
+    row.attendance ? "ครบ" : "ไม่มีข้อมูล",
+    row.attendance?.lateScore ?? "",
+    row.monthly ? "มีข้อมูล" : "ไม่มีข้อมูล",
+    row.syncRow?.reason || "ยังไม่มีข้อมูล",
+    row.disciplineDone ? "กรอกแล้ว" : "รอกรอก",
+    row.syncRow?.evaluation?.scores?.[5] ?? "",
+    row.incentive ? row.incentive.totalAmount : "",
+  ]));
+  downloadCsv(rows, `month-end-status-${state.closingMonth}.csv`);
+}
+
 const SYSTEM_COLLECTION_LABELS = Object.freeze({
   profiles: "โปรไฟล์ผู้ใช้",
   settings: "ตั้งค่า Performance",
@@ -2715,6 +2991,7 @@ function bindGlobalEvents() {
     }
     else if (state.currentView === "workday") refreshWorkdayData({ force: true });
     else if (state.currentView === "monthly") refreshMonthlyData({ force: true });
+    else if (state.currentView === "closing") refreshClosingData({ force: true });
     else if (state.currentView === "system") refreshSystemHealth({ force: true });
     else refreshData();
   });
