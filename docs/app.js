@@ -1805,8 +1805,11 @@ function bindMonthlyMigrationEvents() {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const parsed = JSON.parse(await file.text());
+      if (file.size > 20 * 1024 * 1024) throw new Error("ไฟล์ Monthly Seed มีขนาดใหญ่เกิน 20 MB");
+      const fileText = (await file.text()).replace(/^\uFEFF/, "");
+      const parsed = JSON.parse(fileText);
       if (Number(parsed.schemaVersion) !== 3 || parsed.migrationType !== "employee-hub-monthly-performance-phase-3" || !Array.isArray(parsed.dailyPerformanceEntries) || !Array.isArray(parsed.monthlyPerformanceOverrides)) throw new Error("ไฟล์ Monthly Performance Phase 3 Seed ไม่ถูกต้อง");
+      if (!parsed.dailyPerformanceEntries.length) throw new Error("ไฟล์ Monthly Seed ไม่มีข้อมูลรายวัน");
       state.monthlySeed = parsed;
       state.monthlySeedFileName = file.name;
       renderMigration();
@@ -1827,11 +1830,21 @@ function bindMonthlyMigrationEvents() {
     try {
       if (!state.monthlySeed) throw new Error("กรุณาเลือกไฟล์ Monthly Performance Phase 3 Seed ก่อน");
       setBusy(true, "กำลังนำเข้า Monthly Performance");
-      const result = await window.EmployeeHubDatabase.importMonthlyPerformancePhase3Seed(state.monthlySeed);
+      const result = await window.EmployeeHubDatabase.importMonthlyPerformancePhase3Seed(
+        state.monthlySeed,
+        ({ completed, total, percent }) => {
+          setSyncStatus("syncing", `กำลังนำเข้า Monthly ${percent}% (${completed}/${total})`);
+        }
+      );
       showToast(`นำเข้า Monthly สำเร็จ: รายวัน ${result.entryCount} · Overrides ${result.overrideCount}`);
       state.monthlyDataKey = "";
       await refreshData({ quiet: true });
-    } catch (error) { showToast(error.message || "นำเข้า Monthly ไม่สำเร็จ", "error", 7000); setSyncStatus("error", "นำเข้าไม่สำเร็จ"); }
+    } catch (error) {
+      console.error("Monthly Phase 3 import failed", error);
+      const errorCode = error?.code ? ` [${error.code}]` : "";
+      showToast(`${error.message || "นำเข้า Monthly ไม่สำเร็จ"}${errorCode}`, "error", 9000);
+      setSyncStatus("error", "นำเข้าไม่สำเร็จ");
+    }
     finally { button.disabled = false; state.loading = false; }
   });
 }

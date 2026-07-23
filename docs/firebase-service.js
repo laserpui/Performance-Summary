@@ -5,6 +5,10 @@
   const SDK_VERSION = "12.16.0";
   const SDK_BASE = `https://www.gstatic.com/firebasejs/${SDK_VERSION}`;
   const MAX_BATCH_OPERATIONS = 400;
+  // Monthly Phase 3 uses smaller batches because each write validates the admin profile,
+  // employee document and month-status document in Firestore Security Rules.
+  // Keeping each batch small avoids the multi-document rules access-call limit.
+  const MONTHLY_IMPORT_BATCH_OPERATIONS = 20;
 
   let app = null;
   let auth = null;
@@ -715,7 +719,7 @@
     }
   }
 
-  async function importMonthlyPerformancePhase3Seed(seed) {
+  async function importMonthlyPerformancePhase3Seed(seed, onProgress = null) {
     assertReady();
     const uid = currentUid();
     if (!seed || Number(seed.schemaVersion) !== 3 || seed.migrationType !== "employee-hub-monthly-performance-phase-3") throw new Error("Monthly Performance Phase 3 Seed ไม่ถูกต้องหรือไม่รองรับ");
@@ -811,7 +815,7 @@
         after: { counts: seed.counts || {}, legacyExceptions: seed.legacyExceptions?.length || 0 },
         createdAt: firestoreApi.serverTimestamp(),
       }});
-      await commitOperations(operations);
+      await commitOperations(operations, MONTHLY_IMPORT_BATCH_OPERATIONS, onProgress);
       return {
         entryCount: seed.dailyPerformanceEntries.length,
         overrideCount: seed.monthlyPerformanceOverrides.length,
@@ -1437,10 +1441,14 @@
     }
   }
 
-  async function commitOperations(operations) {
-    for (let index = 0; index < operations.length; index += MAX_BATCH_OPERATIONS) {
+  async function commitOperations(operations, batchSize = MAX_BATCH_OPERATIONS, onProgress = null) {
+    const safeBatchSize = Math.max(1, Math.min(MAX_BATCH_OPERATIONS, Math.trunc(Number(batchSize) || MAX_BATCH_OPERATIONS)));
+    const total = operations.length;
+    let completed = 0;
+    for (let index = 0; index < total; index += safeBatchSize) {
+      const currentOperations = operations.slice(index, index + safeBatchSize);
       const batch = firestoreApi.writeBatch(db);
-      operations.slice(index, index + MAX_BATCH_OPERATIONS).forEach((operation) => {
+      currentOperations.forEach((operation) => {
         if (operation.type === "delete") batch.delete(operation.ref);
         if (operation.type === "set") {
           if (operation.options) batch.set(operation.ref, operation.data, operation.options);
@@ -1448,6 +1456,10 @@
         }
       });
       await batch.commit();
+      completed += currentOperations.length;
+      if (typeof onProgress === "function") {
+        onProgress({ completed, total, percent: total ? Math.round((completed / total) * 100) : 100 });
+      }
     }
   }
 
