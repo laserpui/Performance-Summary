@@ -8,6 +8,7 @@ const VIEW_TITLES = Object.freeze({
   workday: "Workday Insight",
   monthly: "Monthly Performance",
   migration: "Migration Center",
+  system: "ระบบและสำรองข้อมูล",
 });
 
 const MONTHLY_ALL_EMPLOYEES_ID = "__ALL_ACTIVE_EMPLOYEES__";
@@ -102,6 +103,10 @@ const state = {
   monthlyHistoryDate: "",
   monthlySeed: null,
   monthlySeedFileName: "",
+  systemSnapshot: null,
+  systemHealth: null,
+  systemLoading: false,
+  systemLastBackup: null,
 };
 
 const els = {};
@@ -111,7 +116,7 @@ function cacheElements() {
     "authGate", "authMessage", "loginForm", "loginEmail", "loginPassword", "loginButton", "authConfigHelp",
     "appShell", "mobileNav", "pageTitle", "databaseStatusDot", "databaseStatusLabel", "accountName", "accountRole",
     "logoutButton", "refreshButton", "syncBadge", "dashboardView", "employeesView", "serviceView", "performanceView",
-    "workdayView", "monthlyView", "migrationView", "modalRoot", "toastRegion",
+    "workdayView", "monthlyView", "migrationView", "systemView", "modalRoot", "toastRegion",
   ].forEach((id) => { els[id] = document.getElementById(id); });
 }
 
@@ -255,6 +260,7 @@ function showView(viewName) {
   if (viewName === "performance") void refreshPerformanceData();
   if (viewName === "workday") void refreshWorkdayData();
   if (viewName === "monthly") void refreshMonthlyData();
+  if (viewName === "system") void refreshSystemHealth({ quiet: true });
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -297,6 +303,7 @@ function renderCurrentView() {
     workday: renderWorkday,
     monthly: renderMonthly,
     migration: renderMigration,
+    system: renderSystem,
   };
   renderers[state.currentView]?.();
   ensureIcons();
@@ -355,7 +362,8 @@ function renderDashboard() {
         ${moduleCard({ icon: "chart-no-axes-combined", title: "Performance Summary", description: "บันทึกคะแนน KPI ประวัติ รายงาน และ Employee 360° ใน Web เดียว", status: "ใช้งานได้", statusClass: "badge-ready", view: "performance" })}
         ${moduleCard({ icon: "calendar-clock", title: "Workday Insight", description: "เวลาสายรายเดือน วันลา และสรุปสิทธิ์", status: workdayReady ? "ใช้งานได้" : "รอนำเข้า", statusClass: workdayReady ? "badge-ready" : "badge-progress", view: "workday" })}
         ${moduleCard({ icon: "clipboard-check", title: "Monthly Performance", description: "คะแนนรายวัน สถานะการทำงาน วันทำงานจริง และการปิดเดือน", status: state.migrationStatus?.monthlyPerformanceMigrationId ? "ใช้งานได้" : "รอนำเข้า", statusClass: state.migrationStatus?.monthlyPerformanceMigrationId ? "badge-ready" : "badge-progress", view: "monthly" })}
-        ${moduleCard({ icon: "database-zap", title: "Migration Center", description: "จัดการ Seed ของ Phase 1, Workday Phase 2 และ Monthly Phase 3", status: state.migrationStatus?.monthlyPerformanceMigrationId ? "Phase 3 แล้ว" : (workdayReady ? "Phase 2 แล้ว" : (migrationReady ? "Phase 1 แล้ว" : "พร้อมนำเข้า")), statusClass: migrationReady ? "badge-ready" : "badge-progress", view: "migration" })}
+        ${moduleCard({ icon: "database-zap", title: "Migration Center", description: "จัดการ Seed ของ Phase 1, Workday Phase 2 และ Monthly Phase 3", status: state.migrationStatus?.monthlyPerformanceMigrationId ? "Migration ครบ" : (workdayReady ? "Phase 2 แล้ว" : (migrationReady ? "Phase 1 แล้ว" : "พร้อมนำเข้า")), statusClass: migrationReady ? "badge-ready" : "badge-progress", view: "migration" })}
+        ${moduleCard({ icon: "shield-check", title: "ระบบและสำรองข้อมูล", description: "ตรวจความสมบูรณ์ของข้อมูล ดาวน์โหลด Backup และตรวจรายการ Production", status: state.systemHealth?.status === "ok" ? "ระบบปกติ" : "พร้อมตรวจ", statusClass: state.systemHealth?.status === "ok" ? "badge-ready" : "badge-progress", view: "system" })}
       </div>
 
       <div class="split-grid">
@@ -2582,6 +2590,271 @@ function renderMigration() {
   bindMonthlyMigrationEvents();
 }
 
+
+const SYSTEM_COLLECTION_LABELS = Object.freeze({
+  profiles: "โปรไฟล์ผู้ใช้",
+  settings: "ตั้งค่า Performance",
+  employees: "พนักงาน",
+  employeeNames: "ดัชนีชื่อพนักงาน",
+  evaluations: "Performance Summary",
+  serviceIncentives: "Service Incentive",
+  hubSettings: "ตั้งค่าระบบกลาง",
+  attendanceMonthly: "เวลาสายรายเดือน",
+  leaveRecords: "รายการวันลา",
+  workdaySettings: "กฎสิทธิ์วันลา",
+  dailyPerformanceEntries: "Monthly Performance รายวัน",
+  monthlyPerformanceOverrides: "วันทำงาน Override",
+  monthlyPerformanceStatus: "สถานะปิดเดือน",
+  auditLogs: "Audit Log",
+});
+
+function expectedLateScoreForHealth(minutes) {
+  const value = Number(minutes) || 0;
+  if (value <= 29) return 100;
+  if (value <= 59) return 90;
+  if (value <= 89) return 80;
+  if (value <= 119) return 70;
+  return 60;
+}
+
+function validPerformanceScoreForHealth(value) {
+  const score = Number(value);
+  return Number.isInteger(score) && score >= 20 && score <= 100 && score % 5 === 0;
+}
+
+function validMonthlyScoreForHealth(value, legacyException = false) {
+  const score = Number(value);
+  return MONTHLY_SCORE_OPTIONS.includes(score) || (legacyException && score === 3.5);
+}
+
+function buildSystemHealth(snapshot) {
+  const collections = snapshot?.collections || {};
+  const rows = (name) => Array.isArray(collections[name]) ? collections[name] : [];
+  const issues = [];
+  const addIssue = (severity, module, item, message) => issues.push({ severity, module, item, message });
+  const employees = rows("employees");
+  const employeeIds = new Set(employees.map((row) => String(row.__id || "")));
+
+  const codeMap = new Map();
+  const orderMap = new Map();
+  employees.forEach((employee) => {
+    const id = String(employee.__id || "");
+    const code = String(employee.employeeCode || "").trim().toUpperCase();
+    const sortOrder = Number(employee.sortOrder);
+    if (!code) addIssue("error", "Employee Master", id, "ไม่มีรหัสพนักงาน");
+    else {
+      if (codeMap.has(code)) addIssue("error", "Employee Master", code, `รหัสซ้ำกับ ${codeMap.get(code)}`);
+      codeMap.set(code, id);
+    }
+    if (!Number.isInteger(sortOrder) || sortOrder < 1) addIssue("warning", "Employee Master", code || id, "sortOrder ต้องเป็นเลขจำนวนเต็มตั้งแต่ 1");
+    else {
+      if (orderMap.has(sortOrder)) addIssue("warning", "Employee Master", String(sortOrder), `ลำดับซ้ำกับ ${orderMap.get(sortOrder)}`);
+      orderMap.set(sortOrder, code || id);
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(employee.startDate || ""))) addIssue("warning", "Employee Master", code || id, "วันที่เริ่มงานไม่อยู่ในรูปแบบ YYYY-MM-DD");
+    if (!String(employee.fullName || employee.name || "").trim()) addIssue("error", "Employee Master", code || id, "ไม่มีชื่อพนักงาน");
+  });
+
+  const checkEmployeeReference = (collectionName, moduleName) => {
+    rows(collectionName).forEach((row) => {
+      const employeeId = String(row.employeeId || "");
+      if (!employeeIds.has(employeeId)) addIssue("error", moduleName, String(row.__id || "-"), `อ้างถึง employeeId ที่ไม่มีอยู่: ${employeeId || "(ว่าง)"}`);
+    });
+  };
+
+  checkEmployeeReference("serviceIncentives", "Service Incentive");
+  rows("serviceIncentives").forEach((row) => {
+    const expected = Number(row.salesAmount || 0) + Number(row.evaluationAmount || 0) + Number(row.timeAmount || 0);
+    if (Math.abs(expected - Number(row.totalAmount || 0)) > 0.011) addIssue("error", "Service Incentive", String(row.__id || "-"), "ยอดรวมไม่ตรงกับผลรวมของขายของ + ประเมิน + เวลา");
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(row.yearMonth || ""))) addIssue("warning", "Service Incentive", String(row.__id || "-"), "yearMonth ไม่ถูกต้อง");
+  });
+
+  checkEmployeeReference("attendanceMonthly", "Workday · เวลา");
+  rows("attendanceMonthly").forEach((row) => {
+    if (expectedLateScoreForHealth(row.lateMinutes) !== Number(row.lateScore)) addIssue("error", "Workday · เวลา", String(row.__id || "-"), "คะแนนเวลาไม่ตรงกับจำนวนนาทีสาย");
+  });
+
+  checkEmployeeReference("leaveRecords", "Workday · วันลา");
+  rows("leaveRecords").forEach((row) => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(row.date || ""))) addIssue("warning", "Workday · วันลา", String(row.__id || "-"), "วันที่ลาไม่ถูกต้อง");
+    if (!(Number(row.days) > 0)) addIssue("error", "Workday · วันลา", String(row.__id || "-"), "จำนวนวันลาต้องมากกว่า 0");
+    if (!["sick", "personal", "vacation", "ordination", "other"].includes(String(row.leaveType || ""))) addIssue("warning", "Workday · วันลา", String(row.__id || "-"), "ประเภทวันลาไม่อยู่ในรายการที่รองรับ");
+  });
+
+  checkEmployeeReference("dailyPerformanceEntries", "Monthly Performance");
+  rows("dailyPerformanceEntries").forEach((row) => {
+    const id = String(row.__id || "-");
+    const status = String(row.status || "");
+    const scores = row.scores && typeof row.scores === "object" ? row.scores : {};
+    const working = status === "WORK" || status === "WEEKEND_WORK";
+    if (!MONTHLY_STATUS_MAP[status]) addIssue("error", "Monthly Performance", id, `สถานะไม่ถูกต้อง: ${status || "(ว่าง)"}`);
+    if (working && MONTHLY_CRITERIA.some((criterion) => !(criterion.id in scores))) addIssue("error", "Monthly Performance", id, "วันทำงานมีคะแนนไม่ครบ 5 หัวข้อ");
+    Object.entries(scores).forEach(([key, value]) => {
+      if (!validMonthlyScoreForHealth(value, row.legacyException === true)) addIssue("error", "Monthly Performance", `${id}/${key}`, `คะแนน ${value} ไม่ตรงกับช่วงที่ระบบรองรับ`);
+    });
+    if (id !== `${row.employeeId}__${row.date}`) addIssue("warning", "Monthly Performance", id, "Document ID ไม่ตรงกับ employeeId__date");
+  });
+
+  checkEmployeeReference("monthlyPerformanceOverrides", "Monthly Override");
+  rows("monthlyPerformanceOverrides").forEach((row) => {
+    if (!Number.isFinite(Number(row.expectedWorkingDays)) || Number(row.expectedWorkingDays) < 0 || Number(row.expectedWorkingDays) > 31) {
+      addIssue("warning", "Monthly Override", String(row.__id || "-"), "จำนวนวันทำงานที่กำหนดอยู่นอกช่วง 0–31");
+    }
+  });
+
+  checkEmployeeReference("evaluations", "Performance Summary");
+  rows("evaluations").forEach((row) => {
+    const scores = Array.isArray(row.scores) ? row.scores : [];
+    if (scores.length !== 6 || scores.some((score) => !validPerformanceScoreForHealth(score))) {
+      addIssue("error", "Performance Summary", String(row.__id || "-"), "คะแนนต้องครบ 6 หัวข้อและอยู่ระหว่าง 20–100 เพิ่มทีละ 5");
+    }
+    if (row.disciplinePending === true) addIssue("info", "Performance Summary", String(row.__id || "-"), "รอกรอกคะแนนการเคารพกฎระเบียบบริษัท");
+  });
+
+  const hub = rows("hubSettings").find((row) => row.__id === "main") || null;
+  if (!hub) addIssue("warning", "ระบบกลาง", "hubSettings/main", "ไม่พบสถานะ Migration ของระบบกลาง");
+  else {
+    if (!hub.migrationId) addIssue("warning", "Migration", "Phase 1", "ยังไม่มี Migration ID ของ Employee Master/Service Incentive");
+    if (!hub.workdayMigrationId) addIssue("warning", "Migration", "Phase 2", "ยังไม่มี Workday Migration ID");
+    if (!hub.monthlyPerformanceMigrationId) addIssue("warning", "Migration", "Phase 3", "ยังไม่มี Monthly Performance Migration ID");
+  }
+  const workdaySettings = rows("workdaySettings").find((row) => row.__id === "main");
+  if (!workdaySettings?.configured) addIssue("warning", "Workday", "workdaySettings/main", "ยังไม่ได้บันทึกกฎสิทธิ์วันลา");
+
+  const counts = Object.fromEntries(Object.entries(collections).map(([name, items]) => [name, Array.isArray(items) ? items.length : 0]));
+  const errors = issues.filter((issue) => issue.severity === "error").length;
+  const warnings = issues.filter((issue) => issue.severity === "warning").length;
+  const info = issues.filter((issue) => issue.severity === "info").length;
+  return {
+    status: errors ? "error" : warnings ? "warning" : "ok",
+    checkedAt: snapshot.generatedAt || new Date().toISOString(),
+    counts,
+    issues,
+    errors,
+    warnings,
+    info,
+    totalDocuments: Object.values(counts).reduce((sum, count) => sum + Number(count || 0), 0),
+  };
+}
+
+async function refreshSystemHealth({ quiet = false } = {}) {
+  if (!state.user || state.systemLoading) return;
+  state.systemLoading = true;
+  if (!quiet) setBusy(true, "กำลังตรวจสุขภาพระบบ");
+  try {
+    const snapshot = await window.EmployeeHubDatabase.loadSystemSnapshot({ includeAuditLogs: false });
+    state.systemSnapshot = snapshot;
+    state.systemHealth = buildSystemHealth(snapshot);
+    renderSystem();
+    if (!quiet) showToast(state.systemHealth.status === "ok" ? "ตรวจสุขภาพระบบแล้ว ไม่พบปัญหาสำคัญ" : "ตรวจสุขภาพระบบแล้ว กรุณาดูรายการที่พบ", state.systemHealth.status === "error" ? "error" : state.systemHealth.status === "warning" ? "warning" : "success");
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "ตรวจสุขภาพระบบไม่สำเร็จ", "error");
+  } finally {
+    state.systemLoading = false;
+    state.loading = false;
+    els.refreshButton.disabled = false;
+    if (!quiet) setSyncStatus("online", "เชื่อมต่อแล้ว");
+  }
+}
+
+function downloadTextFile(fileName, text, mimeType = "application/json;charset=utf-8") {
+  const blob = new Blob([text], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = fileName;
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
+async function sha256Text(text) {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((part) => part.toString(16).padStart(2, "0")).join("");
+}
+
+async function createAndDownloadSystemBackup() {
+  const button = document.getElementById("downloadSystemBackup");
+  if (button) button.disabled = true;
+  try {
+    const backup = await window.EmployeeHubDatabase.createSystemBackup();
+    const json = JSON.stringify(backup, null, 2);
+    const hash = await sha256Text(json);
+    const stamp = new Date().toISOString().replaceAll(":", "-").replace(/\.\d{3}Z$/, "Z");
+    const fileName = `employee-hub-backup-${stamp}.json`;
+    downloadTextFile(fileName, json);
+    state.systemLastBackup = { fileName, hash, bytes: new TextEncoder().encode(json).byteLength, createdAt: backup.generatedAt };
+    renderSystem();
+    showToast("ดาวน์โหลดไฟล์สำรองระบบแล้ว");
+  } catch (error) {
+    console.error(error);
+    showToast(error.message || "สร้างไฟล์สำรองไม่สำเร็จ", "error");
+  } finally {
+    if (button) button.disabled = false;
+  }
+}
+
+function systemSeverityLabel(severity) {
+  return severity === "error" ? "ผิดพลาด" : severity === "warning" ? "ควรตรวจ" : "ข้อมูล";
+}
+
+function renderSystem() {
+  const health = state.systemHealth;
+  const counts = health?.counts || {};
+  const issueRows = health?.issues || [];
+  const migrationComplete = Boolean(state.migrationStatus?.migrationId && state.migrationStatus?.workdayMigrationId && state.migrationStatus?.monthlyPerformanceMigrationId);
+  els.systemView.innerHTML = `
+    <div class="page-grid">
+      <article class="panel score-sync-hero">
+        <div class="panel-head">
+          <div><p class="eyebrow">PRODUCTION FINALIZATION</p><h2>ระบบและสำรองข้อมูล</h2><p>ตรวจความสมบูรณ์ของฐานข้อมูลและสร้าง Backup ก่อนเปลี่ยนแปลงข้อมูลสำคัญ</p></div>
+          <span class="badge ${health?.status === "ok" ? "badge-ready" : health?.status === "error" ? "badge-danger" : "badge-progress"}">${health ? (health.status === "ok" ? "ระบบปกติ" : health.status === "error" ? "พบข้อผิดพลาด" : "ควรตรวจสอบ") : "ยังไม่ได้ตรวจ"}</span>
+        </div>
+        <div class="system-action-grid">
+          <article class="system-action-card"><span class="kpi-icon"><i data-lucide="stethoscope"></i></span><h3>ตรวจสุขภาพระบบ</h3><p>ตรวจรหัสพนักงาน ข้อมูลอ้างอิง สูตรคะแนน ยอดรวม และความพร้อมของ Migration</p><button id="runSystemHealth" class="button button-primary" type="button"><i data-lucide="scan-line"></i>ตรวจตอนนี้</button></article>
+          <article class="system-action-card"><span class="kpi-icon"><i data-lucide="database-backup"></i></span><h3>สำรอง Firestore</h3><p>ดาวน์โหลดข้อมูลทุก Collection รวม Audit Log เป็นไฟล์ JSON สำหรับเก็บภายในบริษัท</p><button id="downloadSystemBackup" class="button button-secondary" type="button"><i data-lucide="download"></i>ดาวน์โหลด Backup</button></article>
+          <article class="system-action-card"><span class="kpi-icon"><i data-lucide="clipboard-check"></i></span><h3>สถานะ Production</h3><p>${migrationComplete ? "Migration หลักครบแล้ว สามารถใช้ Web รวมเป็นระบบหลักได้" : "ยังมี Migration บางส่วนไม่ครบ กรุณาตรวจ Migration Center"}</p><button class="button button-ghost" data-view="migration" type="button"><i data-lucide="database-zap"></i>เปิด Migration Center</button></article>
+        </div>
+        ${state.systemLastBackup ? `<div class="notice notice-success" style="margin-top:16px"><i data-lucide="file-check-2"></i><div><strong>Backup ล่าสุดในรอบนี้</strong><br>${escapeHtml(state.systemLastBackup.fileName)} · ${formatNumber(state.systemLastBackup.bytes / 1024, 1)} KB<br><span class="backup-hash">SHA-256: ${escapeHtml(state.systemLastBackup.hash)}</span></div></div>` : ""}
+      </article>
+
+      ${health ? `
+      <article class="panel">
+        <div class="panel-head"><div><h2>ผลตรวจสุขภาพ</h2><p>ตรวจเมื่อ ${formatDate(health.checkedAt)}</p></div></div>
+        <div class="health-summary">
+          <div class="health-stat"><span>เอกสารทั้งหมด</span><strong>${formatNumber(health.totalDocuments, 0)}</strong></div>
+          <div class="health-stat"><span>ข้อผิดพลาด</span><strong class="negative">${health.errors}</strong></div>
+          <div class="health-stat"><span>ควรตรวจสอบ</span><strong>${health.warnings}</strong></div>
+          <div class="health-stat"><span>ข้อมูลแจ้งเตือน</span><strong>${health.info}</strong></div>
+        </div>
+        ${issueRows.length ? `<div class="table-wrap health-table"><table><thead><tr><th>ระดับ</th><th>โมดูล</th><th>รายการ</th><th>รายละเอียด</th></tr></thead><tbody>${issueRows.map((issue) => `<tr><td><span class="health-status health-${escapeHtml(issue.severity)}">${systemSeverityLabel(issue.severity)}</span></td><td>${escapeHtml(issue.module)}</td><td><code>${escapeHtml(issue.item)}</code></td><td>${escapeHtml(issue.message)}</td></tr>`).join("")}</tbody></table></div>` : `<div class="notice notice-success"><i data-lucide="circle-check-big"></i><div><strong>ไม่พบปัญหาสำคัญ</strong><br>ข้อมูลอ้างอิงและสูตรที่ตรวจสอบผ่านเงื่อนไขของระบบ</div></div>`}
+      </article>
+
+      <article class="panel">
+        <div class="panel-head"><div><h2>จำนวนข้อมูลในแต่ละ Collection</h2><p>ไม่รวม Audit Log ในการตรวจสุขภาพเพื่อให้โหลดเร็วขึ้น แต่ Backup จะรวม Audit Log ด้วย</p></div></div>
+        <div class="collection-count-grid">${Object.entries(counts).sort(([a], [b]) => a.localeCompare(b)).map(([name, count]) => `<div class="collection-count-card"><span>${escapeHtml(SYSTEM_COLLECTION_LABELS[name] || name)}<br><code>${escapeHtml(name)}</code></span><strong>${formatNumber(count, 0)}</strong></div>`).join("")}</div>
+      </article>` : `<article class="panel"><div class="empty-state"><i data-lucide="shield-question"></i><p>กด “ตรวจตอนนี้” เพื่อประเมินฐานข้อมูล</p></div></article>`}
+
+      <article class="panel">
+        <div class="panel-head"><div><h2>Production Checklist</h2><p>รายการแนะนำก่อนเลิกใช้ Web เดิม</p></div></div>
+        <div class="production-checklist">
+          ${[
+            [migrationComplete, "Migration ข้อมูลหลักครบทั้ง Service Incentive, Workday และ Monthly Performance"],
+            [Boolean(state.migrationStatus?.employeeCodeMigrationId), "รหัสพนักงานเรียงตามวันที่เริ่มงานแล้ว"],
+            [Boolean(state.systemLastBackup), "ดาวน์โหลด Backup หลังตรวจข้อมูลล่าสุดแล้ว"],
+            [health?.status === "ok", "ผลตรวจสุขภาพไม่มี Error หรือ Warning"],
+            [true, "เก็บ Google Sheets เดิมเป็น Read-only และ Backup ภายในบริษัท"],
+          ].map(([done, text]) => `<div class="production-check"><i data-lucide="${done ? "circle-check-big" : "circle-dashed"}"></i><div><strong>${done ? "เรียบร้อย" : "รอดำเนินการ"}</strong><br>${escapeHtml(text)}</div></div>`).join("")}
+        </div>
+      </article>
+    </div>`;
+  document.getElementById("runSystemHealth")?.addEventListener("click", () => refreshSystemHealth());
+  document.getElementById("downloadSystemBackup")?.addEventListener("click", createAndDownloadSystemBackup);
+  ensureIcons();
+}
+
 function showSeedPreview(seed) {
   const first = seed.serviceIncentives?.[0];
   const last = seed.serviceIncentives?.at(-1);
@@ -2648,6 +2921,7 @@ function bindGlobalEvents() {
     }
     else if (state.currentView === "workday") refreshWorkdayData({ force: true });
     else if (state.currentView === "monthly") refreshMonthlyData({ force: true });
+    else if (state.currentView === "system") refreshSystemHealth({ force: true });
     else refreshData();
   });
   document.addEventListener("click", (event) => {

@@ -2055,6 +2055,80 @@
     }
   }
 
+
+  const SYSTEM_COLLECTIONS = Object.freeze([
+    "profiles",
+    "settings",
+    "employees",
+    "employeeNames",
+    "evaluations",
+    "serviceIncentives",
+    "hubSettings",
+    "attendanceMonthly",
+    "leaveRecords",
+    "workdaySettings",
+    "dailyPerformanceEntries",
+    "monthlyPerformanceOverrides",
+    "monthlyPerformanceStatus",
+    "auditLogs",
+  ]);
+
+  function serializeBackupValue(value) {
+    if (value == null) return value;
+    if (typeof value?.toDate === "function") {
+      return { __type: "timestamp", value: value.toDate().toISOString() };
+    }
+    if (Array.isArray(value)) return value.map(serializeBackupValue);
+    if (typeof value === "object") {
+      if (typeof value.path === "string" && value.firestore) {
+        return { __type: "reference", value: value.path };
+      }
+      return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, serializeBackupValue(item)]));
+    }
+    return value;
+  }
+
+  async function readCollectionForSystem(collectionName) {
+    const snapshot = await firestoreApi.getDocs(firestoreApi.collection(db, collectionName));
+    return snapshot.docs.map((document) => ({
+      __id: document.id,
+      ...serializeBackupValue(document.data()),
+    }));
+  }
+
+  async function loadSystemSnapshot({ includeAuditLogs = false } = {}) {
+    assertReady();
+    try {
+      const names = SYSTEM_COLLECTIONS.filter((name) => includeAuditLogs || name !== "auditLogs");
+      const rows = await Promise.all(names.map(async (name) => [name, await readCollectionForSystem(name)]));
+      return {
+        schemaVersion: "employee-hub-system-snapshot-1",
+        projectId: String(CONFIG.projectId || ""),
+        generatedAt: new Date().toISOString(),
+        generatedBy: {
+          uid: currentUid(),
+          email: String(auth.currentUser?.email || ""),
+        },
+        collections: Object.fromEntries(rows),
+      };
+    } catch (error) {
+      throw friendlyError(error, "ตรวจสุขภาพฐานข้อมูลไม่สำเร็จ");
+    }
+  }
+
+  async function createSystemBackup() {
+    try {
+      const backup = await loadSystemSnapshot({ includeAuditLogs: true });
+      return {
+        ...backup,
+        schemaVersion: "employee-hub-backup-1",
+        backupNotice: "ไฟล์สำรองสำหรับตรวจสอบและกู้คืนโดยผู้ดูแลระบบ โปรดเก็บในพื้นที่ปลอดภัย",
+      };
+    } catch (error) {
+      throw friendlyError(error, "สร้างไฟล์สำรองระบบไม่สำเร็จ");
+    }
+  }
+
   const api = Object.freeze({
     isConfigured,
     signIn,
@@ -2100,6 +2174,8 @@
     deleteMonthlyPerformanceOverride,
     setMonthlyPerformanceMonthStatus,
     importMonthlyPerformancePhase3Seed,
+    loadSystemSnapshot,
+    createSystemBackup,
   });
 
   global.EmployeeHubDatabase = api;

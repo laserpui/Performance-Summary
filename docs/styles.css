@@ -413,7 +413,7 @@ tr:last-child td { border-bottom: 0; }
   .main-content { padding: 0 0 20px; }
   .topbar { align-items: flex-start; padding: 10px 4px 18px; }
   .sync-badge { display: none; }
-  .mobile-nav { position: fixed; z-index: 50; left: 10px; right: 10px; bottom: 10px; display: grid; grid-template-columns: repeat(7,1fr); padding: 7px; border-radius: 20px; }
+  .mobile-nav { position: fixed; z-index: 50; left: 10px; right: 10px; bottom: 10px; display: grid; grid-template-columns: repeat(8,1fr); padding: 7px; border-radius: 20px; }
   .mobile-nav-item { display: grid; justify-items: center; gap: 3px; padding: 7px 4px; border-radius: 14px; background: transparent; color: #5f7280; font-size: .64rem; font-weight: 700; }
   .mobile-nav-item.active { color: var(--primary-deep); background: var(--primary-soft); }
   .mobile-nav-item svg { width: 20px; height: 20px; }
@@ -491,4 +491,39 @@ tr:last-child td { border-bottom: 0; }
 .performance-score-card small { display: block; margin-top: 4px; }
 @media (max-width: 900px) {
   .score-sync-table { min-width: 980px; }
+}
+
+
+/* Phase 5 · Production Finalization */
+.system-action-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; }
+.system-action-card { display:flex; flex-direction:column; gap:12px; padding:18px; border:1px solid var(--border); border-radius:18px; background:rgba(255,255,255,.66); }
+.system-action-card .kpi-icon { align-self:flex-start; }
+.system-action-card h3 { margin:0; }
+.system-action-card p { margin:0; color:var(--muted); line-height:1.6; flex:1; }
+.health-summary { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:14px 0 18px; }
+.health-stat { padding:15px; border:1px solid var(--border); border-radius:16px; background:rgba(255,255,255,.68); }
+.health-stat span { display:block; color:var(--muted); font-size:.84rem; }
+.health-stat strong { display:block; margin-top:4px; font-size:1.55rem; }
+.health-table td:first-child { width:120px; }
+.health-status { display:inline-flex; align-items:center; gap:6px; font-weight:800; }
+.health-status::before { content:""; width:8px; height:8px; border-radius:50%; background:currentColor; }
+.health-ok { color:#17814b; }
+.health-warning { color:#a56500; }
+.health-error { color:#b12c3d; }
+.health-info { color:#24678f; }
+.collection-count-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+.collection-count-card { padding:13px 14px; border:1px solid var(--border); border-radius:14px; background:rgba(255,255,255,.62); }
+.collection-count-card span { display:block; color:var(--muted); font-size:.8rem; overflow-wrap:anywhere; }
+.collection-count-card strong { display:block; font-size:1.25rem; margin-top:3px; }
+.backup-hash { overflow-wrap:anywhere; font-family:ui-monospace,SFMono-Regular,Consolas,monospace; font-size:.78rem; }
+.production-checklist { display:grid; gap:10px; }
+.production-check { display:grid; grid-template-columns:28px 1fr; gap:10px; align-items:start; padding:12px; border:1px solid var(--border); border-radius:14px; background:rgba(255,255,255,.62); }
+.production-check svg { color:var(--primary); }
+@media (max-width: 1000px) {
+  .system-action-grid, .collection-count-grid { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .health-summary { grid-template-columns:repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 640px) {
+  .system-action-grid, .collection-count-grid, .health-summary { grid-template-columns:1fr; }
+  .mobile-nav { overflow-x:auto; grid-template-columns:repeat(8,minmax(64px,1fr)); }
 }
