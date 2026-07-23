@@ -593,9 +593,12 @@ const LEAVE_TYPE_LABELS = Object.freeze({
   sick: "ลาป่วย",
   personal: "ลากิจ",
   vacation: "ลาพักร้อน",
-  ordination: "ลาอื่น ๆ · ลาบวช",
-  other: "ลาอื่น ๆ · อื่น ๆ",
+  other: "ลาอื่นๆ",
 });
+
+function normalizedLeaveType(type) {
+  return type === "ordination" ? "other" : type;
+}
 
 function calculateLateScore(lateMinutes) {
   const minutes = Math.max(0, Math.trunc(Number(lateMinutes) || 0));
@@ -645,7 +648,8 @@ function selectedLeaveRecord() {
 }
 
 function leaveTypeLabel(type) {
-  return LEAVE_TYPE_LABELS[type] || type || "ไม่ระบุ";
+  const normalizedType = normalizedLeaveType(type);
+  return LEAVE_TYPE_LABELS[normalizedType] || normalizedType || "ไม่ระบุ";
 }
 
 function leaveTypeBadge(type) {
@@ -653,10 +657,9 @@ function leaveTypeBadge(type) {
     sick: "badge-danger",
     personal: "badge-progress",
     vacation: "badge-ready",
-    ordination: "badge-ordination",
     other: "badge-planned",
   };
-  return classes[type] || "badge-planned";
+  return classes[normalizedLeaveType(type)] || "badge-planned";
 }
 
 function sortedActiveEmployees() {
@@ -781,27 +784,33 @@ function renderAttendanceSection() {
 function renderLeaveSection() {
   const employees = sortedActiveEmployees();
   const editing = selectedLeaveRecord();
+  const editingType = normalizedLeaveType(editing?.leaveType);
   const filtered = state.leaveRecords.filter((record) => {
     if (record.year !== Number(state.workdayYear)) return false;
     if (state.leaveEmployeeId && record.employeeId !== state.leaveEmployeeId) return false;
-    if (state.leaveTypeFilter && record.leaveType !== state.leaveTypeFilter) return false;
+    if (state.leaveTypeFilter && normalizedLeaveType(record.leaveType) !== state.leaveTypeFilter) return false;
     return true;
   });
   const employeesById = employeeMap();
   const totalDays = filtered.reduce((sum, record) => sum + record.days, 0);
-  const typeTotals = Object.keys(LEAVE_TYPE_LABELS).map((type) => [type, filtered.filter((record) => record.leaveType === type).reduce((sum, record) => sum + record.days, 0)]);
+  const typeTotals = Object.keys(LEAVE_TYPE_LABELS).map((type) => [
+    type,
+    filtered
+      .filter((record) => normalizedLeaveType(record.leaveType) === type)
+      .reduce((sum, record) => sum + record.days, 0),
+  ]);
 
   return `
     <div class="split-grid workday-entry-grid">
       <article class="panel">
-        <div class="panel-head"><div><h2>${editing ? "แก้ไขวันลา" : "บันทึกวันลา"}</h2><p>รองรับลาป่วย ลากิจ พักร้อน และลาอื่น ๆ โดยลาบวชรวมอยู่ในหมวดลาอื่น</p></div>${editing ? `<span class="badge badge-progress">กำลังแก้ไข</span>` : ""}</div>
+        <div class="panel-head"><div><h2>${editing ? "แก้ไขวันลา" : "บันทึกวันลา"}</h2><p>รองรับลาป่วย ลากิจ ลาพักร้อน และลาอื่นๆ โดยระบุรายละเอียดของลาอื่นๆ ในช่องหมายเหตุ</p></div>${editing ? `<span class="badge badge-progress">กำลังแก้ไข</span>` : ""}</div>
         <form id="leaveForm">
           <div class="form-grid">
             <div class="field"><label for="leaveEmployee">พนักงาน</label><select id="leaveEmployee" required><option value="">เลือกพนักงาน</option>${employees.map((employee) => `<option value="${escapeHtml(employee.id)}" ${(editing?.employeeId || "") === employee.id ? "selected" : ""}>${escapeHtml(`${employee.employeeCode} · ${employee.fullName}`)}</option>`).join("")}</select></div>
             <div class="field"><label for="leaveDate">วันที่เริ่มลา</label><input id="leaveDate" type="date" required value="${escapeHtml(editing?.date || `${state.workdayYear}-01-01`)}" /></div>
-            <div class="field"><label for="leaveType">ประเภท</label><select id="leaveType" required>${Object.entries(LEAVE_TYPE_LABELS).map(([type, label]) => `<option value="${type}" ${editing?.leaveType === type ? "selected" : ""}>${label}</option>`).join("")}</select></div>
+            <div class="field"><label for="leaveType">ประเภท</label><select id="leaveType" required>${Object.entries(LEAVE_TYPE_LABELS).map(([type, label]) => `<option value="${type}" ${editingType === type ? "selected" : ""}>${label}</option>`).join("")}</select></div>
             <div class="field"><label for="leaveDays">จำนวนวัน</label><input id="leaveDays" type="number" min="0.5" max="365" step="0.5" required value="${editing?.days ?? 1}" /></div>
-            <div class="field field-full"><label for="leaveNote">หมายเหตุ</label><textarea id="leaveNote" maxlength="1000" placeholder="รายละเอียดเพิ่มเติม">${escapeHtml(editing?.note || "")}</textarea></div>
+            <div class="field field-full"><label for="leaveNote">หมายเหตุ</label><textarea id="leaveNote" maxlength="1000" placeholder="ระบุรายละเอียดของลาอื่นๆ">${escapeHtml(editing?.note || "")}</textarea></div>
             <label class="check-field field-full"><input id="leaveExcludeHolidays" type="checkbox" ${editing?.excludeHolidays ? "checked" : ""} /><span>นับเฉพาะวันทำงาน ไม่รวมวันหยุด</span></label>
           </div>
           <div class="form-actions"><button class="button button-primary" type="submit"><i data-lucide="save"></i>${editing ? "อัปเดตวันลา" : "บันทึกวันลา"}</button><button id="clearLeaveForm" class="button button-ghost" type="button">${editing ? "ยกเลิกแก้ไข" : "ล้างฟอร์ม"}</button></div>
@@ -841,7 +850,8 @@ function renderLeaveBalanceSection() {
   records.forEach((record) => {
     if (!usedByEmployee.has(record.employeeId)) usedByEmployee.set(record.employeeId, {});
     const row = usedByEmployee.get(record.employeeId);
-    row[record.leaveType] = (row[record.leaveType] || 0) + record.days;
+    const normalizedType = normalizedLeaveType(record.leaveType);
+    row[normalizedType] = (row[normalizedType] || 0) + record.days;
   });
 
   return `
@@ -851,7 +861,7 @@ function renderLeaveBalanceSection() {
         ? `<div class="notice notice-info"><i data-lucide="info"></i><div>พักร้อนตามเกณฑ์ 6/8/10/12/14/15 วัน และคำนวณอายุงาน ณ <strong>${settings.vacationReference === "yearEnd" ? "สิ้นปี" : "วันที่ 1 มกราคม"}</strong> · อัปเดต ${formatDate(settings.updatedAt)}</div></div>`
         : `<div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div><strong>ยังไม่ได้ตั้งค่าสิทธิ์วันลาของบริษัท</strong><br>ระบบจะแสดงจำนวนวันที่ใช้แล้ว แต่ยังไม่แสดงยอดคงเหลือจนกว่าจะบันทึกกฎในปุ่ม “ตั้งค่าสิทธิ์”</div></div>`}
       <div class="table-wrap" style="margin-top:16px"><table class="balance-table">
-        <thead><tr><th>รหัส</th><th>ชื่อพนักงาน</th><th>อายุงาน</th><th class="money">ลาป่วย ใช้/สิทธิ์/คงเหลือ</th><th class="money">ลากิจ ใช้/สิทธิ์/คงเหลือ</th><th class="money">พักร้อน ใช้/สิทธิ์/คงเหลือ</th><th class="money">ลาอื่น (รวมลาบวช)</th></tr></thead>
+        <thead><tr><th>รหัส</th><th>ชื่อพนักงาน</th><th>อายุงาน</th><th class="money">ลาป่วย ใช้/สิทธิ์/คงเหลือ</th><th class="money">ลากิจ ใช้/สิทธิ์/คงเหลือ</th><th class="money">พักร้อน ใช้/สิทธิ์/คงเหลือ</th><th class="money">ลาอื่นๆ</th></tr></thead>
         <tbody>${employees.map((employee) => {
           const used = usedByEmployee.get(employee.id) || {};
           const refDate = settings.vacationReference === "yearEnd" ? `${state.workdayYear}-12-31` : `${state.workdayYear}-01-01`;
@@ -862,7 +872,7 @@ function renderLeaveBalanceSection() {
             [used.personal || 0, settings.configured ? settings.personalAnnualDays : null],
             [used.vacation || 0, vacationAllowed],
           ].map(([usedDays, allowed]) => allowed === null ? `${formatNumber(usedDays)} / - / -` : `${formatNumber(usedDays)} / ${formatNumber(allowed)} / <strong class="${allowed-usedDays<0?"negative":"positive"}">${formatNumber(allowed-usedDays)}</strong>`);
-          const otherLeaveUsed = (Number(used.ordination) || 0) + (Number(used.other) || 0);
+          const otherLeaveUsed = Number(used.other) || 0;
           return `<tr><td><strong>${escapeHtml(employee.employeeCode)}</strong></td><td>${escapeHtml(employee.fullName)}</td><td>${serviceYears} ปี</td><td class="money">${cells[0]}</td><td class="money">${cells[1]}</td><td class="money">${cells[2]}</td><td class="money">${formatNumber(otherLeaveUsed)}</td></tr>`;
         }).join("")}</tbody>
       </table></div>
@@ -1068,7 +1078,9 @@ function exportAttendanceCsv() {
 
 function exportLeaveCsv() {
   const employeesById = employeeMap();
-  const records = state.leaveRecords.filter((record) => record.year === Number(state.workdayYear) && (!state.leaveEmployeeId || record.employeeId === state.leaveEmployeeId) && (!state.leaveTypeFilter || record.leaveType === state.leaveTypeFilter));
+  const records = state.leaveRecords.filter((record) => record.year === Number(state.workdayYear)
+    && (!state.leaveEmployeeId || record.employeeId === state.leaveEmployeeId)
+    && (!state.leaveTypeFilter || normalizedLeaveType(record.leaveType) === state.leaveTypeFilter));
   if (!records.length) return showToast("ไม่มีข้อมูลวันลาสำหรับ Export", "warning");
   const rows = [["วันที่", "รหัสพนักงาน", "ชื่อพนักงาน", "ประเภท", "จำนวนวัน", "ไม่รวมวันหยุด", "หมายเหตุ", "แก้ไขล่าสุด"]];
   records.forEach((record) => {
@@ -1174,7 +1186,7 @@ function showWorkdaySeedPreview(seed) {
     <div class="modal-backdrop"><section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="workdaySeedPreviewTitle">
       <div class="modal-head"><div><p class="eyebrow">WORKDAY PHASE 2 SEED</p><h2 id="workdaySeedPreviewTitle">ตรวจไฟล์นำเข้า</h2></div><button id="closeModalButton" class="icon-button" type="button"><i data-lucide="x"></i></button></div>
       <div class="notice notice-success"><i data-lucide="badge-check"></i><div>Schema Version ${escapeHtml(seed.schemaVersion)} · Migration ID ${escapeHtml(seed.migrationId)}</div></div>
-      <div class="code-block" style="margin-top:14px">เวลาสาย: ${seed.attendanceMonthly?.length || 0} รายการ\nวันลา: ${seed.leaveRecords?.length || 0} รายการ\nช่วงเวลาสาย: ${escapeHtml(firstAttendance?.yearMonth || "-")} ถึง ${escapeHtml(lastAttendance?.yearMonth || "-")}\nไม่นำเข้า: ${seed.excludedSourceRecords?.length || 0} รายการ\nเดือนที่ไม่มีแถวต้นฉบับ: ${seed.missingAttendanceMonths?.length || 0}\nวันลาป่วย: ${formatNumber(summaries.sick || 0)}\nลากิจ: ${formatNumber(summaries.personal || 0)}\nพักร้อน: ${formatNumber(summaries.vacation || 0)}\nลาอื่น (รวมลาบวช): ${formatNumber((summaries.ordination || 0) + (summaries.other || 0))}</div>
+      <div class="code-block" style="margin-top:14px">เวลาสาย: ${seed.attendanceMonthly?.length || 0} รายการ\nวันลา: ${seed.leaveRecords?.length || 0} รายการ\nช่วงเวลาสาย: ${escapeHtml(firstAttendance?.yearMonth || "-")} ถึง ${escapeHtml(lastAttendance?.yearMonth || "-")}\nไม่นำเข้า: ${seed.excludedSourceRecords?.length || 0} รายการ\nเดือนที่ไม่มีแถวต้นฉบับ: ${seed.missingAttendanceMonths?.length || 0}\nวันลาป่วย: ${formatNumber(summaries.sick || 0)}\nลากิจ: ${formatNumber(summaries.personal || 0)}\nพักร้อน: ${formatNumber(summaries.vacation || 0)}\nลาอื่นๆ: ${formatNumber((summaries.ordination || 0) + (summaries.other || 0))}</div>
       <div class="notice notice-warning" style="margin-top:14px"><i data-lucide="info"></i><div>Seed ไม่เติม 0 ให้เดือนที่ไม่มี Attendance Record และยังไม่กำหนดสิทธิ์วันลาของบริษัทแทนผู้ใช้</div></div>
       <div class="form-actions"><button id="closeWorkdaySeedPreview" class="button button-primary" type="button">ปิด</button></div>
     </section></div>`;
