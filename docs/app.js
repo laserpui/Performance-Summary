@@ -68,8 +68,6 @@ const state = {
   employee360Data: null,
   employee360Loading: false,
   migrationStatus: null,
-  seed: null,
-  seedFileName: "",
   serviceMonth: "",
   serviceEmployeeId: "",
   employeeSearch: "",
@@ -85,8 +83,6 @@ const state = {
   leaveEmployeeId: "",
   leaveTypeFilter: "",
   leaveEditingId: "",
-  workdaySeed: null,
-  workdaySeedFileName: "",
   monthlyEntries: [],
   monthlyOverrides: [],
   monthlyStatus: { status: "OPEN" },
@@ -100,8 +96,6 @@ const state = {
   monthlyEditingId: "",
   monthlyHistoryEmployeeId: "",
   monthlyHistoryDate: "",
-  monthlySeed: null,
-  monthlySeedFileName: "",
   systemSnapshot: null,
   systemHealth: null,
   systemLoading: false,
@@ -173,18 +167,6 @@ function nextEmployeeCode() {
 
 function nextEmployeeSortOrder() {
   return state.employees.reduce((highest, employee) => Math.max(highest, Number(employee.sortOrder) || 0), 0) + 1;
-}
-
-function buildEmployeeCodePlan() {
-  const invalid = state.employees.filter((employee) => !/^\d{4}-\d{2}-\d{2}$/.test(String(employee.startDate || "")));
-  if (invalid.length) throw new Error(`ยังมีพนักงาน ${invalid.length} คนที่ไม่มีวันที่เริ่มงานที่ถูกต้อง`);
-  return [...state.employees]
-    .sort((a, b) => a.startDate.localeCompare(b.startDate) || a.fullName.localeCompare(b.fullName, "th") || a.id.localeCompare(b.id))
-    .map((employee, index) => ({
-      ...employee,
-      nextEmployeeCode: `EMP${String(index + 1).padStart(3, "0")}`,
-      nextSortOrder: index + 1,
-    }));
 }
 
 function getLatestIncentiveMonth() {
@@ -349,16 +331,16 @@ function renderDashboard() {
         </article>
         <article class="kpi-card">
           <div class="kpi-head"><span>Workday Insight</span><span class="kpi-icon"><i data-lucide="calendar-clock"></i></span></div>
-          <div class="kpi-value">${workdayReady ? (Number(workdayCounts.attendanceMonthly) || 0) + (Number(workdayCounts.leaveRecords) || 0) : "รอ"}</div><div class="kpi-note">${workdayReady ? `เวลา ${Number(workdayCounts.attendanceMonthly) || 0} · วันลา ${Number(workdayCounts.leaveRecords) || 0}` : "รอนำเข้า Phase 2"}</div>
+          <div class="kpi-value">${workdayReady ? (Number(workdayCounts.attendanceMonthly) || 0) + (Number(workdayCounts.leaveRecords) || 0) : "รอ"}</div><div class="kpi-note">${workdayReady ? `เวลา ${Number(workdayCounts.attendanceMonthly) || 0} · วันลา ${Number(workdayCounts.leaveRecords) || 0}` : "ยังไม่มีข้อมูล"}</div>
         </article>
       </div>
 
       <div class="module-grid">
-        ${moduleCard({ icon: "users-round", title: "Employee Master", description: "รายชื่อ รหัสพนักงาน วันที่เริ่มงาน และ Legacy IDs", status: state.employees.length ? "เชื่อมต่อแล้ว" : "รอนำเข้า", statusClass: state.employees.length ? "badge-ready" : "badge-progress", view: "employees" })}
-        ${moduleCard({ icon: "badge-dollar-sign", title: "Service Incentive", description: "บันทึกยอดขาย ประเมิน เวลา และยอดรวมรายเดือน", status: state.incentives.length ? "ใช้งานได้" : "รอนำเข้า", statusClass: state.incentives.length ? "badge-ready" : "badge-progress", view: "service" })}
+        ${moduleCard({ icon: "users-round", title: "Employee Master", description: "รายชื่อ รหัสพนักงาน วันที่เริ่มงาน และ Legacy IDs", status: state.employees.length ? "เชื่อมต่อแล้ว" : "ยังไม่มีข้อมูล", statusClass: state.employees.length ? "badge-ready" : "badge-progress", view: "employees" })}
+        ${moduleCard({ icon: "badge-dollar-sign", title: "Service Incentive", description: "บันทึกยอดขาย ประเมิน เวลา และยอดรวมรายเดือน", status: state.incentives.length ? "ใช้งานได้" : "ยังไม่มีข้อมูล", statusClass: state.incentives.length ? "badge-ready" : "badge-progress", view: "service" })}
         ${moduleCard({ icon: "chart-no-axes-combined", title: "Performance Summary", description: "บันทึกคะแนน KPI ประวัติ รายงาน และ Employee 360° ใน Web เดียว", status: "ใช้งานได้", statusClass: "badge-ready", view: "performance" })}
-        ${moduleCard({ icon: "calendar-clock", title: "Workday Insight", description: "เวลาสายรายเดือน วันลา และสรุปสิทธิ์", status: workdayReady ? "ใช้งานได้" : "รอนำเข้า", statusClass: workdayReady ? "badge-ready" : "badge-progress", view: "workday" })}
-        ${moduleCard({ icon: "clipboard-check", title: "Monthly Performance", description: "คะแนนรายวัน สถานะการทำงาน วันทำงานจริง และการปิดเดือน", status: state.migrationStatus?.monthlyPerformanceMigrationId ? "ใช้งานได้" : "รอนำเข้า", statusClass: state.migrationStatus?.monthlyPerformanceMigrationId ? "badge-ready" : "badge-progress", view: "monthly" })}
+        ${moduleCard({ icon: "calendar-clock", title: "Workday Insight", description: "เวลาสายรายเดือน วันลา และสรุปสิทธิ์", status: workdayReady ? "ใช้งานได้" : "ยังไม่มีข้อมูล", statusClass: workdayReady ? "badge-ready" : "badge-progress", view: "workday" })}
+        ${moduleCard({ icon: "clipboard-check", title: "Monthly Performance", description: "คะแนนรายวัน สถานะการทำงาน วันทำงานจริง และการปิดเดือน", status: state.migrationStatus?.monthlyPerformanceMigrationId ? "ใช้งานได้" : "ยังไม่มีข้อมูล", statusClass: state.migrationStatus?.monthlyPerformanceMigrationId ? "badge-ready" : "badge-progress", view: "monthly" })}
         ${moduleCard({ icon: "shield-check", title: "ระบบและสำรองข้อมูล", description: "ตรวจความสมบูรณ์ของข้อมูล ดาวน์โหลด Backup และตรวจรายการ Production", status: state.systemHealth?.status === "ok" ? "ระบบปกติ" : "พร้อมตรวจ", statusClass: state.systemHealth?.status === "ok" ? "badge-ready" : "badge-progress", view: "system" })}
       </div>
 
@@ -1343,7 +1325,7 @@ function renderWorkday() {
       <article class="panel workday-hero">
         <div class="panel-head">
           <div><h2>Workday Insight</h2><p>เวลาสายรายเดือน วันลา และสรุปสิทธิ์จาก Employee Master กลาง</p></div>
-          <span class="badge ${imported ? "badge-ready" : "badge-progress"}">${imported ? "Phase 2 พร้อมใช้งาน" : "รอนำเข้า Phase 2"}</span>
+          <span class="badge ${imported ? "badge-ready" : "badge-progress"}">${imported ? "Phase 2 พร้อมใช้งาน" : "ยังไม่มีข้อมูล"}</span>
         </div>
         ${imported
           ? `<div class="notice notice-success"><i data-lucide="circle-check"></i><div>นำเข้าข้อมูลแล้ว: เวลาสาย <strong>${Number(counts.attendanceMonthly) || 0}</strong> รายการ · วันลา <strong>${Number(counts.leaveRecords) || 0}</strong> รายการ</div></div>`
@@ -1937,7 +1919,7 @@ function renderMonthly() {
       <article class="panel monthly-hero">
         <div class="panel-head">
           <div><h2>Monthly Performance</h2><p>คะแนนรายวัน สถานะการทำงาน วันทำงานจริง และการปิดเดือน</p></div>
-          <span class="badge ${imported ? "badge-ready" : "badge-progress"}">${imported ? "Phase 3 พร้อมใช้งาน" : "รอนำเข้า Phase 3"}</span>
+          <span class="badge ${imported ? "badge-ready" : "badge-progress"}">${imported ? "Phase 3 พร้อมใช้งาน" : "ควรตรวจสอบ"}</span>
         </div>
         ${imported
           ? `<div class="notice notice-success"><i data-lucide="circle-check"></i><div>นำเข้าข้อมูลแล้ว: รายวัน <strong>${Number(counts.dailyPerformanceEntries) || 0}</strong> รายการ · Overrides <strong>${Number(counts.monthlyPerformanceOverrides) || 0}</strong> รายการ</div></div>`
@@ -2302,291 +2284,6 @@ function exportMonthlyEntriesCsv() {
   state.monthlyEntries.filter((entry) => !state.monthlyHistoryEmployeeId || entry.employeeId === state.monthlyHistoryEmployeeId).filter((entry) => !state.monthlyHistoryDate || entry.date === state.monthlyHistoryDate).forEach((entry) => { const employee = employeesById.get(entry.employeeId); rows.push([entry.date, employee?.employeeCode || "", employee?.fullName || entry.employeeId, monthlyStatusLabel(entry.status), ...MONTHLY_CRITERIA.map((criterion) => entry.scores?.[criterion.id] ?? ""), entry.note, entry.legacyException ? "ใช่" : "ไม่", entry.updatedAt]); });
   downloadCsv(rows, `monthly-performance-entries-${state.monthlyMonth}.csv`);
 }
-function workdayMigrationPanelHtml() {
-  const imported = Boolean(state.migrationStatus?.workdayMigrationId);
-  const counts = state.workdaySeed?.counts || state.migrationStatus?.workdayCounts || { attendanceMonthly: 66, leaveRecords: 118, excludedSourceRecords: 3, missingAttendanceMonths: 6 };
-  return `
-    <article class="panel">
-      <div class="panel-head"><div><h2>Migration Center · Phase 2</h2><p>นำเข้า Workday Insight: เวลาสายรายเดือนและวันลาที่ตรวจสอบแล้ว</p></div><span class="badge ${imported ? "badge-ready" : "badge-progress"}">${imported ? "นำเข้าแล้ว" : "พร้อมนำเข้า"}</span></div>
-      ${imported
-        ? `<div class="notice notice-success"><i data-lucide="circle-check"></i><div><strong>Workday Migration สำเร็จ</strong><br>ID: ${escapeHtml(state.migrationStatus.workdayMigrationId)} · วันที่ ${formatDate(state.migrationStatus.workdayImportedAt)}</div></div>`
-        : `<div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div>Phase 2 จะเพิ่ม Collection <code>attendanceMonthly</code> และ <code>leaveRecords</code> โดยไม่แก้ Google Sheets เดิมและไม่ลบข้อมูล Phase 1</div></div>`}
-      <div class="kpi-grid" style="margin-top:16px">
-        <article class="kpi-card"><div class="kpi-head"><span>เวลาสายรายเดือน</span><span class="kpi-icon"><i data-lucide="clock-3"></i></span></div><div class="kpi-value">${Number(counts.attendanceMonthly) || 0}</div><div class="kpi-note">ข้อมูลต้นฉบับ 6 เดือน</div></article>
-        <article class="kpi-card"><div class="kpi-head"><span>วันลา</span><span class="kpi-icon"><i data-lucide="calendar-off"></i></span></div><div class="kpi-value">${Number(counts.leaveRecords) || 0}</div><div class="kpi-note">หลังใช้ข้อยืนยัน Migration</div></article>
-        <article class="kpi-card"><div class="kpi-head"><span>ไม่นำเข้า</span><span class="kpi-icon"><i data-lucide="file-x-2"></i></span></div><div class="kpi-value">${Number(counts.excludedSourceRecords) || 0}</div><div class="kpi-note">รายการขัดแย้งที่ยืนยันแล้ว</div></article>
-        <article class="kpi-card"><div class="kpi-head"><span>เดือนที่ไม่มีแถว</span><span class="kpi-icon"><i data-lucide="circle-dashed"></i></span></div><div class="kpi-value">${Number(counts.missingAttendanceMonths) || 0}</div><div class="kpi-note">คงเป็น “ยังไม่มีข้อมูล” ไม่เติม 0</div></article>
-      </div>
-      <div class="field" style="margin-top:16px">
-        <label for="workdayMigrationFile">เลือกไฟล์ Workday Phase 2 Seed</label>
-        <input id="workdayMigrationFile" type="file" accept="application/json,.json" />
-        <span class="field-help">ใช้ไฟล์ <code>migration/workday-phase2-seed.json</code> จากชุด Full เท่านั้น</span>
-      </div>
-      ${state.workdaySeed ? `<div class="notice notice-info" style="margin-top:12px"><i data-lucide="file-check-2"></i><div>เลือกไฟล์แล้ว: <strong>${escapeHtml(state.workdaySeedFileName || "workday-phase2-seed.json")}</strong> · เวลา ${state.workdaySeed.attendanceMonthly?.length || 0} · วันลา ${state.workdaySeed.leaveRecords?.length || 0}</div></div>` : ""}
-      <div class="form-actions"><button id="previewWorkdaySeedButton" class="button button-secondary" type="button" ${state.workdaySeed ? "" : "disabled"}><i data-lucide="scan-search"></i>ตรวจ Workday Seed</button><button id="importWorkdaySeedButton" class="button button-primary" type="button" ${state.workdaySeed ? "" : "disabled"}><i data-lucide="database-zap"></i>${imported ? "นำเข้า Workday ใหม่จากต้นฉบับ" : "เริ่มนำเข้า Phase 2"}</button></div>
-    </article>`;
-}
-
-function bindWorkdayMigrationEvents() {
-  document.getElementById("workdayMigrationFile")?.addEventListener("change", async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    try {
-      const parsed = JSON.parse(await file.text());
-      if (Number(parsed.schemaVersion) !== 2 || parsed.migrationType !== "employee-hub-workday-phase-2" || !Array.isArray(parsed.attendanceMonthly) || !Array.isArray(parsed.leaveRecords)) {
-        throw new Error("ไฟล์ Workday Phase 2 Seed ไม่ถูกต้อง");
-      }
-      state.workdaySeed = parsed;
-      state.workdaySeedFileName = file.name;
-      renderMigration();
-      showToast("อ่านไฟล์ Workday Phase 2 Seed แล้ว");
-    } catch (error) {
-      state.workdaySeed = null;
-      state.workdaySeedFileName = "";
-      showToast(error.message || "อ่านไฟล์ Workday Seed ไม่สำเร็จ", "error");
-    }
-  });
-  document.getElementById("previewWorkdaySeedButton")?.addEventListener("click", () => {
-    if (state.workdaySeed) showWorkdaySeedPreview(state.workdaySeed);
-  });
-  document.getElementById("importWorkdaySeedButton")?.addEventListener("click", async (event) => {
-    const imported = Boolean(state.migrationStatus?.workdayMigrationId);
-    const warning = imported
-      ? "ระบบเคยนำเข้า Workday Phase 2 แล้ว การนำเข้าใหม่จะเขียนข้อมูลจากไฟล์ต้นฉบับทับรายการที่มี Document ID เดียวกัน ดำเนินการต่อหรือไม่?"
-      : "ยืนยันนำเข้าเวลาสาย 66 รายการ และวันลา 118 รายการเข้า Firestore ใช่หรือไม่?";
-    if (!window.confirm(warning)) return;
-    const button = event.currentTarget;
-    button.disabled = true;
-    try {
-      if (!state.workdaySeed) throw new Error("กรุณาเลือกไฟล์ Workday Phase 2 Seed ก่อน");
-      setBusy(true, "กำลังนำเข้า Workday Insight");
-      const result = await window.EmployeeHubDatabase.importWorkdayPhase2Seed(state.workdaySeed);
-      showToast(`นำเข้า Phase 2 สำเร็จ: เวลา ${result.attendanceCount} · วันลา ${result.leaveCount} · ไม่นำเข้า ${result.excludedCount}`);
-      state.workdayDataKey = "";
-      await refreshData({ quiet: true });
-    } catch (error) {
-      showToast(error.message || "นำเข้า Workday Phase 2 ไม่สำเร็จ", "error", 7000);
-      setSyncStatus("error", "นำเข้า Phase 2 ไม่สำเร็จ");
-    } finally {
-      button.disabled = false;
-      state.loading = false;
-    }
-  });
-}
-
-function showWorkdaySeedPreview(seed) {
-  const firstAttendance = seed.attendanceMonthly?.[0];
-  const lastAttendance = seed.attendanceMonthly?.at(-1);
-  const summaries = seed.summaries?.leaveDaysByType || {};
-  els.modalRoot.innerHTML = `
-    <div class="modal-backdrop"><section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="workdaySeedPreviewTitle">
-      <div class="modal-head"><div><p class="eyebrow">WORKDAY PHASE 2 SEED</p><h2 id="workdaySeedPreviewTitle">ตรวจไฟล์นำเข้า</h2></div><button id="closeModalButton" class="icon-button" type="button"><i data-lucide="x"></i></button></div>
-      <div class="notice notice-success"><i data-lucide="badge-check"></i><div>Schema Version ${escapeHtml(seed.schemaVersion)} · Migration ID ${escapeHtml(seed.migrationId)}</div></div>
-      <div class="code-block" style="margin-top:14px">เวลาสาย: ${seed.attendanceMonthly?.length || 0} รายการ\nวันลา: ${seed.leaveRecords?.length || 0} รายการ\nช่วงเวลาสาย: ${escapeHtml(firstAttendance?.yearMonth || "-")} ถึง ${escapeHtml(lastAttendance?.yearMonth || "-")}\nไม่นำเข้า: ${seed.excludedSourceRecords?.length || 0} รายการ\nเดือนที่ไม่มีแถวต้นฉบับ: ${seed.missingAttendanceMonths?.length || 0}\nวันลาป่วย: ${formatNumber(summaries.sick || 0)}\nลากิจ: ${formatNumber(summaries.personal || 0)}\nพักร้อน: ${formatNumber(summaries.vacation || 0)}\nลาอื่นๆ: ${formatNumber((summaries.ordination || 0) + (summaries.other || 0))}</div>
-      <div class="notice notice-warning" style="margin-top:14px"><i data-lucide="info"></i><div>Seed ไม่เติม 0 ให้เดือนที่ไม่มี Attendance Record และยังไม่กำหนดสิทธิ์วันลาของบริษัทแทนผู้ใช้</div></div>
-      <div class="form-actions"><button id="closeWorkdaySeedPreview" class="button button-primary" type="button">ปิด</button></div>
-    </section></div>`;
-  ensureIcons();
-  const close = () => { els.modalRoot.innerHTML = ""; };
-  document.getElementById("closeModalButton").addEventListener("click", close);
-  document.getElementById("closeWorkdaySeedPreview").addEventListener("click", close);
-}
-
-
-function monthlyMigrationPanelHtml() {
-  const imported = Boolean(state.migrationStatus?.monthlyPerformanceMigrationId);
-  const counts = state.monthlySeed?.counts || state.migrationStatus?.monthlyPerformanceCounts || { dailyPerformanceEntries: 1748, scoreRecordsCombined: 7815, monthlyPerformanceOverrides: 72, months: 7, legacyExceptions: 1 };
-  return `
-    <article class="panel">
-      <div class="panel-head"><div><h2>Migration Center · Phase 3</h2><p>นำเข้า Monthly Performance: สถานะรายวัน คะแนน 5 หัวข้อ และวันทำงานจริง</p></div><span class="badge ${imported ? "badge-ready" : "badge-progress"}">${imported ? "นำเข้าแล้ว" : "พร้อมนำเข้า"}</span></div>
-      ${imported ? `<div class="notice notice-success"><i data-lucide="circle-check"></i><div><strong>Monthly Performance Migration สำเร็จ</strong><br>ID: ${escapeHtml(state.migrationStatus.monthlyPerformanceMigrationId)} · วันที่ ${formatDate(state.migrationStatus.monthlyPerformanceImportedAt)}</div></div>` : `<div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div>Phase 3 จะเพิ่ม Collection <code>dailyPerformanceEntries</code>, <code>monthlyPerformanceOverrides</code> และ <code>monthlyPerformanceStatus</code> โดยไม่แก้ Google Sheets เดิม</div></div>`}
-      <div class="kpi-grid" style="margin-top:16px">
-        <article class="kpi-card"><div class="kpi-head"><span>ข้อมูลรายวัน</span><span class="kpi-icon"><i data-lucide="calendar-check-2"></i></span></div><div class="kpi-value">${Number(counts.dailyPerformanceEntries) || 0}</div><div class="kpi-note">รวม Attendance และคะแนนแล้ว</div></article>
-        <article class="kpi-card"><div class="kpi-head"><span>คะแนนต้นฉบับ</span><span class="kpi-icon"><i data-lucide="list-checks"></i></span></div><div class="kpi-value">${Number(counts.scoreRecordsCombined) || 0}</div><div class="kpi-note">5 หัวข้อจาก Excel</div></article>
-        <article class="kpi-card"><div class="kpi-head"><span>Overrides</span><span class="kpi-icon"><i data-lucide="calendar-cog"></i></span></div><div class="kpi-value">${Number(counts.monthlyPerformanceOverrides) || 0}</div><div class="kpi-note">วันทำงานจริง ม.ค.–มิ.ย.</div></article>
-        <article class="kpi-card"><div class="kpi-head"><span>ประวัติพิเศษ</span><span class="kpi-icon"><i data-lucide="badge-alert"></i></span></div><div class="kpi-value">${Number(counts.legacyExceptions) || 0}</div><div class="kpi-note">คะแนน 3.5 ที่ยืนยันแล้ว</div></article>
-      </div>
-      <div class="field" style="margin-top:16px"><label for="monthlyMigrationFile">เลือกไฟล์ Monthly Performance Phase 3 Seed</label><input id="monthlyMigrationFile" type="file" accept="application/json,.json" /><span class="field-help">ใช้ไฟล์ <code>migration/monthly-performance-phase3-seed.json</code> จากชุด Full เท่านั้น</span></div>
-      ${state.monthlySeed ? `<div class="notice notice-info" style="margin-top:12px"><i data-lucide="file-check-2"></i><div>เลือกไฟล์แล้ว: <strong>${escapeHtml(state.monthlySeedFileName || "monthly-performance-phase3-seed.json")}</strong> · รายวัน ${state.monthlySeed.dailyPerformanceEntries?.length || 0} · Overrides ${state.monthlySeed.monthlyPerformanceOverrides?.length || 0}</div></div>` : ""}
-      <div class="form-actions"><button id="previewMonthlySeedButton" class="button button-secondary" type="button" ${state.monthlySeed ? "" : "disabled"}><i data-lucide="scan-search"></i>ตรวจ Monthly Seed</button><button id="importMonthlySeedButton" class="button button-primary" type="button" ${state.monthlySeed ? "" : "disabled"}><i data-lucide="database-zap"></i>${imported ? "นำเข้า Monthly ใหม่จากต้นฉบับ" : "เริ่มนำเข้า Phase 3"}</button></div>
-    </article>`;
-}
-
-function bindMonthlyMigrationEvents() {
-  document.getElementById("monthlyMigrationFile")?.addEventListener("change", async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    try {
-      const parsed = JSON.parse(await file.text());
-      if (Number(parsed.schemaVersion) !== 3 || parsed.migrationType !== "employee-hub-monthly-performance-phase-3" || !Array.isArray(parsed.dailyPerformanceEntries) || !Array.isArray(parsed.monthlyPerformanceOverrides)) throw new Error("ไฟล์ Monthly Performance Phase 3 Seed ไม่ถูกต้อง");
-      state.monthlySeed = parsed;
-      state.monthlySeedFileName = file.name;
-      renderMigration();
-      showToast("อ่านไฟล์ Monthly Performance Phase 3 Seed แล้ว");
-    } catch (error) {
-      state.monthlySeed = null;
-      state.monthlySeedFileName = "";
-      showToast(error.message || "อ่านไฟล์ Monthly Seed ไม่สำเร็จ", "error");
-    }
-  });
-  document.getElementById("previewMonthlySeedButton")?.addEventListener("click", () => { if (state.monthlySeed) showMonthlySeedPreview(state.monthlySeed); });
-  document.getElementById("importMonthlySeedButton")?.addEventListener("click", async (event) => {
-    const imported = Boolean(state.migrationStatus?.monthlyPerformanceMigrationId);
-    const warning = imported ? "ระบบเคยนำเข้า Monthly Phase 3 แล้ว การนำเข้าใหม่จะเขียนข้อมูลจากไฟล์ต้นฉบับทับ Document ID เดิม ดำเนินการต่อหรือไม่?" : "ยืนยันนำเข้าข้อมูลรายวัน 1,748 รายการ และ Override 72 รายการเข้า Firestore ใช่หรือไม่?";
-    if (!window.confirm(warning)) return;
-    const button = event.currentTarget;
-    button.disabled = true;
-    try {
-      if (!state.monthlySeed) throw new Error("กรุณาเลือกไฟล์ Monthly Performance Phase 3 Seed ก่อน");
-      setBusy(true, "กำลังนำเข้า Monthly Performance");
-      const result = await window.EmployeeHubDatabase.importMonthlyPerformancePhase3Seed(state.monthlySeed);
-      showToast(`นำเข้า Monthly สำเร็จ: รายวัน ${result.entryCount} · Overrides ${result.overrideCount}`);
-      state.monthlyDataKey = "";
-      await refreshData({ quiet: true });
-    } catch (error) { showToast(error.message || "นำเข้า Monthly ไม่สำเร็จ", "error", 7000); setSyncStatus("error", "นำเข้าไม่สำเร็จ"); }
-    finally { button.disabled = false; state.loading = false; }
-  });
-}
-
-function showMonthlySeedPreview(seed) {
-  const summary = seed.summaries || {};
-  els.modalRoot.innerHTML = `<div class="modal-backdrop"><section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="monthlySeedPreviewTitle"><div class="modal-head"><div><p class="eyebrow">MONTHLY PHASE 3 SEED</p><h2 id="monthlySeedPreviewTitle">ตรวจไฟล์นำเข้า</h2></div><button id="closeModalButton" class="icon-button" type="button"><i data-lucide="x"></i></button></div><div class="notice notice-success"><i data-lucide="badge-check"></i><div>Schema Version ${escapeHtml(seed.schemaVersion)} · Migration ID ${escapeHtml(seed.migrationId)}</div></div><div class="code-block" style="margin-top:14px">ข้อมูลรายวัน: ${seed.dailyPerformanceEntries?.length || 0}
-คะแนนต้นฉบับที่รวม: ${seed.counts?.scoreRecordsCombined || 0}
-Overrides: ${seed.monthlyPerformanceOverrides?.length || 0}
-ช่วงข้อมูล: ${escapeHtml(summary.dateFrom || "-")} ถึง ${escapeHtml(summary.dateTo || "-")}
-เดือนข้อมูล: ${seed.counts?.months || 0}
-คะแนนประวัติพิเศษ: ${seed.legacyExceptions?.length || 0}</div><div class="notice notice-warning" style="margin-top:14px"><i data-lucide="triangle-alert"></i><div>คะแนนประวัติพิเศษ 3.5 จำนวน 1 รายการจะถูกเก็บเป็น <code>legacyException=true</code> ตามข้อยืนยัน</div></div><div class="form-actions"><button id="closeMonthlySeedPreview" class="button button-primary" type="button">ปิด</button></div></section></div>`;
-  ensureIcons();
-  const close = () => { els.modalRoot.innerHTML = ""; };
-  document.getElementById("closeModalButton").addEventListener("click", close);
-  document.getElementById("closeMonthlySeedPreview").addEventListener("click", close);
-}
-
-function renderMigration() {
-  const status = state.migrationStatus;
-  const seedCounts = state.seed?.counts || { employees: 12, serviceIncentives: 72, serviceMonths: 6 };
-  let employeeCodePlan = [];
-  let employeeCodePlanError = "";
-  try { employeeCodePlan = buildEmployeeCodePlan(); } catch (error) { employeeCodePlanError = error.message; }
-  const employeeCodeOrderMatches = !employeeCodePlanError && employeeCodePlan.every((employee) =>
-    employee.employeeCode === employee.nextEmployeeCode && Number(employee.sortOrder) === employee.nextSortOrder
-  );
-  const employeeCodeOrderApplied = employeeCodeOrderMatches;
-  els.migrationView.innerHTML = `
-    <div class="page-grid">
-      <article class="panel">
-        <div class="panel-head"><div><h2>Migration Center · Phase 1</h2><p>นำเข้า Employee Master และ Service Incentive จากไฟล์ที่ตรวจสอบแล้ว</p></div><span class="badge ${status ? "badge-ready" : "badge-progress"}">${status ? "นำเข้าแล้ว" : "พร้อมนำเข้า"}</span></div>
-        ${status ? `<div class="notice notice-success"><i data-lucide="circle-check"></i><div><strong>Migration สำเร็จ</strong><br>ID: ${escapeHtml(status.migrationId)} · วันที่ ${formatDate(status.importedAt)}</div></div>` : `<div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div>การกดนำเข้าจะเพิ่ม/อัปเดตข้อมูลใน Firestore Project เดิม โดยไม่ลบ Google Sheets และไม่ลบ Performance Summary เดิม</div></div>`}
-        <div class="kpi-grid" style="margin-top:16px">
-          <article class="kpi-card"><div class="kpi-head"><span>Employee Master</span><span class="kpi-icon"><i data-lucide="users-round"></i></span></div><div class="kpi-value">${seedCounts.employees || 12}</div><div class="kpi-note">จับคู่ครบทุกระบบ</div></article>
-          <article class="kpi-card"><div class="kpi-head"><span>Service Incentive</span><span class="kpi-icon"><i data-lucide="badge-dollar-sign"></i></span></div><div class="kpi-value">${seedCounts.serviceIncentives || 72}</div><div class="kpi-note">รายการที่ตรวจยอดรวมแล้ว</div></article>
-          <article class="kpi-card"><div class="kpi-head"><span>เดือนข้อมูล</span><span class="kpi-icon"><i data-lucide="calendar-range"></i></span></div><div class="kpi-value">${seedCounts.serviceMonths || 6}</div><div class="kpi-note">ม.ค.–มิ.ย. 2569</div></article>
-          <article class="kpi-card"><div class="kpi-head"><span>ข้อมูลต้นฉบับ</span><span class="kpi-icon"><i data-lucide="file-spreadsheet"></i></span></div><div class="kpi-value">3</div><div class="kpi-note">Google Sheets/Excel ยังคงเดิม</div></article>
-        </div>
-        <div class="field" style="margin-top:16px">
-          <label for="migrationFile">เลือกไฟล์ Migration Seed จากเครื่อง</label>
-          <input id="migrationFile" type="file" accept="application/json,.json" />
-          <span class="field-help">ไฟล์ <code>migration/migration-seed.json</code> ถูกเก็บนอกโฟลเดอร์ docs จึงไม่ถูกเผยแพร่บน Hosting</span>
-        </div>
-        ${state.seed ? `<div class="notice notice-info" style="margin-top:12px"><i data-lucide="file-check-2"></i><div>เลือกไฟล์แล้ว: <strong>${escapeHtml(state.seedFileName || "migration-seed.json")}</strong> · ${state.seed.employees?.length || 0} พนักงาน · ${state.seed.serviceIncentives?.length || 0} รายการ</div></div>` : ""}
-        <div class="form-actions">
-          <button id="previewSeedButton" class="button button-secondary" type="button" ${state.seed ? "" : "disabled"}><i data-lucide="scan-search"></i>ตรวจไฟล์ Seed</button>
-          <button id="importSeedButton" class="button button-primary" type="button" ${state.seed ? "" : "disabled"}><i data-lucide="database-zap"></i>${status ? "นำเข้าใหม่จากต้นฉบับ" : "เริ่มนำเข้า Phase 1"}</button>
-        </div>
-      </article>
-      ${workdayMigrationPanelHtml()}
-      ${monthlyMigrationPanelHtml()}
-      <article class="panel">
-        <div class="panel-head"><div><h2>ปรับรหัสพนักงานทั้งระบบ</h2><p>เรียงรหัสและลำดับแสดงผลจากวันที่เริ่มงานเก่าสุดไปใหม่สุด</p></div><span class="badge ${employeeCodeOrderApplied ? "badge-ready" : "badge-progress"}">${employeeCodeOrderApplied ? "ปรับแล้ว" : "พร้อมปรับ"}</span></div>
-        ${employeeCodeOrderApplied
-          ? `<div class="notice notice-success"><i data-lucide="circle-check"></i><div><strong>ใช้ลำดับตามอายุงานแล้ว</strong><br>${status?.employeeCodeUpdatedAt ? `อัปเดตล่าสุด ${formatDate(status.employeeCodeUpdatedAt)}` : "ตรวจสอบจากข้อมูลปัจจุบันแล้ว"}</div></div>`
-          : `<div class="notice notice-info"><i data-lucide="list-ordered"></i><div>ระบบจะเปลี่ยนเฉพาะ <code>employeeCode</code> และ <code>sortOrder</code> โดยคง Firebase Document ID, Legacy IDs และข้อมูล Service Incentive เดิมทั้งหมด</div></div>`}
-        ${employeeCodePlanError ? `<div class="notice notice-warning" style="margin-top:12px"><i data-lucide="triangle-alert"></i><div>${escapeHtml(employeeCodePlanError)}</div></div>` : `
-        <div class="table-wrap" style="margin-top:14px"><table>
-          <thead><tr><th>ลำดับ</th><th>รหัสใหม่</th><th>ชื่อพนักงาน</th><th>วันที่เริ่มงาน</th><th>รหัสปัจจุบัน</th></tr></thead>
-          <tbody>${employeeCodePlan.map((employee) => `<tr><td>${employee.nextSortOrder}</td><td><strong>${escapeHtml(employee.nextEmployeeCode)}</strong></td><td>${escapeHtml(employee.fullName)}</td><td>${escapeHtml(employee.startDate)}</td><td>${escapeHtml(employee.employeeCode || "-")}</td></tr>`).join("")}</tbody>
-        </table></div>`}
-        <div class="form-actions"><button id="applyEmployeeCodeOrderButton" class="button button-primary" type="button" ${employeeCodeOrderApplied || employeeCodePlanError ? "disabled" : ""}><i data-lucide="arrow-down-0-1"></i>${employeeCodeOrderApplied ? "ปรับรหัสเรียบร้อยแล้ว" : "ยืนยันปรับรหัสทั้งระบบ"}</button></div>
-      </article>
-      <article class="panel">
-        <div class="panel-head"><div><h2>ลำดับหลังนำเข้า</h2><p>ตรวจสอบก่อนย้ายโมดูลถัดไป</p></div></div>
-        <ol>
-          <li>ตรวจ Employee Master จำนวน 12 คน และรหัส EMP001–EMP012</li>
-          <li>ตรวจ Service Incentive แต่ละเดือนเทียบกับ Google Sheets เดิม</li>
-          <li>ใช้งาน Web ใหม่คู่ขนาน โดยยังไม่ลบ Web เดิม</li>
-          <li>ตรวจ Workday Insight: เวลาสาย 66 รายการ และวันลา 118 รายการ</li>
-          <li>ตรวจ Monthly Performance: รายวัน 1,748 รายการ และ Override 72 รายการ</li>
-        </ol>
-      </article>
-    </div>`;
-
-  document.getElementById("migrationFile")?.addEventListener("change", async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    try {
-      const parsed = JSON.parse(await file.text());
-      if (Number(parsed.schemaVersion) !== 1 || !Array.isArray(parsed.employees) || !Array.isArray(parsed.serviceIncentives)) {
-        throw new Error("ไฟล์ Migration Seed ไม่ถูกต้อง");
-      }
-      state.seed = parsed;
-      state.seedFileName = file.name;
-      renderMigration();
-      ensureIcons();
-      showToast("อ่านไฟล์ Migration Seed แล้ว");
-    } catch (error) {
-      state.seed = null;
-      state.seedFileName = "";
-      showToast(error.message || "อ่านไฟล์ไม่สำเร็จ", "error");
-    }
-  });
-  document.getElementById("applyEmployeeCodeOrderButton")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    const plan = buildEmployeeCodePlan();
-    const preview = plan.map((employee) => `${employee.nextEmployeeCode} · ${employee.fullName}`).join("\n");
-    if (!window.confirm(`ยืนยันเปลี่ยนรหัสพนักงานทั้ง ${plan.length} คนตามวันที่เริ่มงานหรือไม่?\n\n${preview}\n\nFirebase Document ID และข้อมูลเดิมจะไม่ถูกเปลี่ยน`)) return;
-    button.disabled = true;
-    try {
-      setBusy(true, "กำลังปรับรหัสพนักงาน");
-      const result = await window.EmployeeHubDatabase.reorderEmployeeCodesByStartDate();
-      showToast(`ปรับรหัสและลำดับพนักงานสำเร็จ ${result.count} คน`);
-      await refreshData({ quiet: true });
-    } catch (error) {
-      showToast(error.message || "ปรับรหัสพนักงานไม่สำเร็จ", "error", 6500);
-      setSyncStatus("error", "ปรับรหัสไม่สำเร็จ");
-    } finally {
-      button.disabled = false;
-      state.loading = false;
-    }
-  });
-  document.getElementById("previewSeedButton")?.addEventListener("click", () => {
-    if (state.seed) showSeedPreview(state.seed);
-  });
-  document.getElementById("importSeedButton")?.addEventListener("click", async (event) => {
-    const button = event.currentTarget;
-    const warning = status
-      ? "ระบบเคยนำเข้าแล้ว การนำเข้าใหม่จะเขียนค่าจากไฟล์ต้นฉบับทับ Service Incentive เดิมของเดือน ม.ค.–มิ.ย. 2569 ดำเนินการต่อหรือไม่?"
-      : "ยืนยันนำเข้า Employee Master 12 คน และ Service Incentive 72 รายการเข้า Firestore ใช่หรือไม่?";
-    if (!window.confirm(warning)) return;
-    button.disabled = true;
-    try {
-      if (!state.seed) throw new Error("กรุณาเลือกไฟล์ Migration Seed ก่อน");
-      setBusy(true, "กำลังนำเข้าข้อมูล");
-      const result = await window.EmployeeHubDatabase.importMigrationSeed(state.seed);
-      showToast(`นำเข้าสำเร็จ: พนักงาน ${result.employeeCount} คน · Incentive ${result.incentiveCount} รายการ`);
-      await refreshData({ quiet: true });
-    } catch (error) {
-      showToast(error.message, "error", 6500);
-      setSyncStatus("error", "นำเข้าไม่สำเร็จ");
-    } finally {
-      button.disabled = false;
-      state.loading = false;
-    }
-  });
-  bindWorkdayMigrationEvents();
-  bindMonthlyMigrationEvents();
-}
-
-
 const SYSTEM_COLLECTION_LABELS = Object.freeze({
   profiles: "โปรไฟล์ผู้ใช้",
   settings: "ตั้งค่า Performance",
@@ -2849,22 +2546,6 @@ function renderSystem() {
   document.getElementById("runSystemHealth")?.addEventListener("click", () => refreshSystemHealth());
   document.getElementById("downloadSystemBackup")?.addEventListener("click", createAndDownloadSystemBackup);
   ensureIcons();
-}
-
-function showSeedPreview(seed) {
-  const first = seed.serviceIncentives?.[0];
-  const last = seed.serviceIncentives?.at(-1);
-  els.modalRoot.innerHTML = `
-    <div class="modal-backdrop"><section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="seedPreviewTitle">
-      <div class="modal-head"><div><p class="eyebrow">MIGRATION SEED</p><h2 id="seedPreviewTitle">ตรวจไฟล์นำเข้า</h2></div><button id="closeModalButton" class="icon-button" type="button"><i data-lucide="x"></i></button></div>
-      <div class="notice notice-success"><i data-lucide="badge-check"></i><div>Schema Version ${escapeHtml(seed.schemaVersion)} · Migration ID ${escapeHtml(seed.migrationId)}</div></div>
-      <div class="code-block" style="margin-top:14px">พนักงาน: ${seed.employees?.length || 0}\nService Incentive: ${seed.serviceIncentives?.length || 0}\nช่วงข้อมูล: ${escapeHtml(first?.yearMonth || "-")} ถึง ${escapeHtml(last?.yearMonth || "-")}\nข้อยืนยัน Migration: ${seed.decisions?.length || 0} รายการ</div>
-      <div class="form-actions"><button id="closeSeedPreview" class="button button-primary" type="button">ปิด</button></div>
-    </section></div>`;
-  ensureIcons();
-  const close = () => { els.modalRoot.innerHTML = ""; };
-  document.getElementById("closeModalButton").addEventListener("click", close);
-  document.getElementById("closeSeedPreview").addEventListener("click", close);
 }
 
 async function handleLogin(event) {
