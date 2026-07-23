@@ -2,9 +2,9 @@
 
 const APP_RELEASE = Object.freeze({
   product: "Employee Management Hub",
-  version: "1.0.1",
-  phase: "Final UI Refresh",
-  releaseName: "Modern Workspace Release",
+  version: "1.0.2",
+  phase: "Menu Restore Fix",
+  releaseName: "Modern Workspace · Restored Navigation",
   releasedAt: "2026-07-23",
 });
 
@@ -109,7 +109,7 @@ const PERFORMANCE_LEGACY_ANNUAL_SCORES = Object.freeze({
 const state = {
   user: null,
   profile: null,
-  currentView: "monthly",
+  currentView: "dashboard",
   loading: false,
   employees: [],
   incentives: [],
@@ -4381,7 +4381,7 @@ async function initializeAuthenticatedApp() {
   setSyncStatus("syncing", "กำลังโหลดข้อมูล");
   await refreshData();
   const hashView = window.location.hash.replace("#", "");
-  showView(VIEW_TITLES[hashView] ? hashView : "monthly");
+  showView(VIEW_TITLES[hashView] ? hashView : "dashboard");
 }
 
 function bindGlobalEvents() {

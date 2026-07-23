@@ -49,21 +49,27 @@
 
   <div id="appShell" class="app-shell" hidden>
     <aside class="sidebar glass-card" aria-label="เมนูหลัก">
-      <a class="brand" href="#monthly" aria-label="Employee Management Hub · Monthly Performance">
+      <a class="brand" href="#dashboard" aria-label="Employee Management Hub · ภาพรวมระบบ">
         <span class="brand-mark"><i data-lucide="building-2"></i></span>
         <span><strong>Employee Hub</strong><small>People Operations Workspace</small></span>
       </a>
+      <div class="nav-section-heading"><span>OVERVIEW &amp; REPORTS</span><small>ส่วนบน</small></div>
+      <nav class="primary-nav overview-nav">
+        <button class="nav-item active" data-view="dashboard" type="button"><span class="nav-icon"><i data-lucide="layout-dashboard"></i></span><span class="nav-copy"><strong>ภาพรวม</strong><small>ภาพรวมสถานะของทุกโมดูล</small></span><i class="nav-chevron" data-lucide="chevron-right"></i></button>
+        <button class="nav-item" data-view="executive" type="button"><span class="nav-icon"><i data-lucide="chart-spline"></i></span><span class="nav-copy"><strong>Executive Dashboard</strong><small>KPI และรายการที่ต้องติดตาม</small></span><i class="nav-chevron" data-lucide="chevron-right"></i></button>
+        <button class="nav-item" data-view="annual" type="button"><span class="nav-icon"><i data-lucide="calendar-range"></i></span><span class="nav-copy"><strong>รายงานประจำปี</strong><small>ผลประเมินและ Incentive ทั้งปี</small></span><i class="nav-chevron" data-lucide="chevron-right"></i></button>
+      </nav>
 
-      <div class="nav-section-heading"><span>MONTHLY WORKFLOW</span><small>เมนูหลัก</small></div>
-      <nav class="primary-nav">
-        <button class="nav-item active" data-view="monthly" data-step="01" type="button"><span class="nav-icon"><i data-lucide="clipboard-check"></i></span><span class="nav-copy"><strong>Monthly Performance</strong><small>คะแนนและผลงานรายวัน</small></span><i class="nav-chevron" data-lucide="chevron-right"></i></button>
+      <div class="nav-section-heading workflow-heading"><span>MONTHLY WORKFLOW</span><small>เมนูตามลำดับ</small></div>
+      <nav class="primary-nav workflow-nav">
+        <button class="nav-item" data-view="monthly" data-step="01" type="button"><span class="nav-icon"><i data-lucide="clipboard-check"></i></span><span class="nav-copy"><strong>Monthly Performance</strong><small>คะแนนและผลงานรายวัน</small></span><i class="nav-chevron" data-lucide="chevron-right"></i></button>
         <button class="nav-item" data-view="workday" data-step="02" type="button"><span class="nav-icon"><i data-lucide="calendar-clock"></i></span><span class="nav-copy"><strong>Workday Insight</strong><small>เวลาสายและวันลา</small></span><i class="nav-chevron" data-lucide="chevron-right"></i></button>
         <button class="nav-item" data-view="service" data-step="03" type="button"><span class="nav-icon"><i data-lucide="badge-dollar-sign"></i></span><span class="nav-copy"><strong>Service Incentive</strong><small>เงินพิเศษประจำเดือน</small></span><i class="nav-chevron" data-lucide="chevron-right"></i></button>
         <button class="nav-item" data-view="performance" data-step="04" type="button"><span class="nav-icon"><i data-lucide="chart-no-axes-combined"></i></span><span class="nav-copy"><strong>Performance Summary</strong><small>GPA และผลประเมิน</small></span><i class="nav-chevron" data-lucide="chevron-right"></i></button>
         <button class="nav-item" data-view="closing" data-step="05" type="button"><span class="nav-icon"><i data-lucide="calendar-check-2"></i></span><span class="nav-copy"><strong>ปิดรอบเดือน</strong><small>ตรวจ รับรอง และล็อกรอบ</small></span><i class="nav-chevron" data-lucide="chevron-right"></i></button>
         <button class="nav-item" data-view="employees" data-step="06" type="button"><span class="nav-icon"><i data-lucide="users-round"></i></span><span class="nav-copy"><strong>พนักงาน</strong><small>Employee Master</small></span><i class="nav-chevron" data-lucide="chevron-right"></i></button>
-        <button class="nav-item" data-view="audit" data-step="07" type="button"><span class="nav-icon"><i data-lucide="history"></i></span><span class="nav-copy"><strong>ประวัติและตรวจสอบ</strong><small>Audit & Change History</small></span><i class="nav-chevron" data-lucide="chevron-right"></i></button>
-        <button class="nav-item" data-view="system" data-step="08" type="button"><span class="nav-icon"><i data-lucide="shield-check"></i></span><span class="nav-copy"><strong>ระบบและสำรองข้อมูล</strong><small>Health, Backup & Release</small></span><i class="nav-chevron" data-lucide="chevron-right"></i></button>
+        <button class="nav-item" data-view="audit" data-step="07" type="button"><span class="nav-icon"><i data-lucide="history"></i></span><span class="nav-copy"><strong>ประวัติและตรวจสอบ</strong><small>Audit &amp; Change History</small></span><i class="nav-chevron" data-lucide="chevron-right"></i></button>
+        <button class="nav-item" data-view="system" data-step="08" type="button"><span class="nav-icon"><i data-lucide="shield-check"></i></span><span class="nav-copy"><strong>ระบบและสำรองข้อมูล</strong><small>Health, Backup &amp; Release</small></span><i class="nav-chevron" data-lucide="chevron-right"></i></button>
       </nav>
 
       <div class="sidebar-foot">
@@ -76,7 +82,7 @@
           <span><strong id="accountName">ผู้ใช้งาน</strong><small id="accountRole">กำลังตรวจสอบสิทธิ์</small></span>
           <button id="logoutButton" class="icon-button" type="button" aria-label="ออกจากระบบ"><i data-lucide="log-out"></i></button>
         </div>
-        <p><span class="release-dot"></span>Production v1.0.1 · Final UI</p>
+        <p><span class="release-dot"></span>Production v1.0.2 · Menu Restore</p>
       </div>
     </aside>
 
@@ -84,25 +90,18 @@
       <header class="topbar glass-card">
         <div class="topbar-title-group">
           <div class="page-kicker"><span class="page-kicker-dot"></span><span>EMPLOYEE MANAGEMENT HUB</span></div>
-          <h1 id="pageTitle">Monthly Performance</h1>
-          <p id="pageDescription" class="page-description">บันทึกและติดตามคะแนนผลงานประจำวันของพนักงาน</p>
+          <h1 id="pageTitle">ภาพรวมระบบ</h1>
+          <p id="pageDescription" class="page-description">ภาพรวมสถานะและข้อมูลสำคัญจากทุกโมดูล</p>
         </div>
         <div class="topbar-actions">
-          <details class="report-menu">
-            <summary class="button button-ghost report-menu-trigger"><i data-lucide="chart-pie"></i><span>ศูนย์รายงาน</span><i class="summary-chevron" data-lucide="chevron-down"></i></summary>
-            <div class="report-menu-panel glass-card">
-              <p class="report-menu-label">REPORTS & INSIGHTS</p>
-              <button data-view="dashboard" type="button"><span><i data-lucide="layout-dashboard"></i></span><div><strong>ภาพรวมระบบ</strong><small>สถานะทุกโมดูลในหน้าเดียว</small></div></button>
-              <button data-view="executive" type="button"><span><i data-lucide="chart-spline"></i></span><div><strong>Executive Dashboard</strong><small>KPI และรายการที่ต้องติดตาม</small></div></button>
-              <button data-view="annual" type="button"><span><i data-lucide="calendar-range"></i></span><div><strong>รายงานประจำปี</strong><small>ผลประเมินและ Incentive ทั้งปี</small></div></button>
-            </div>
-          </details>
           <span id="syncBadge" class="sync-badge"><span class="status-dot status-offline"></span><span>กำลังเชื่อมต่อ</span></span>
           <button id="refreshButton" class="icon-button refresh-button" type="button" aria-label="โหลดข้อมูลใหม่" title="โหลดข้อมูลใหม่"><i data-lucide="refresh-cw"></i></button>
         </div>
       </header>
-
-      <section id="monthlyView" class="view active" aria-labelledby="pageTitle"></section>
+      <section id="dashboardView" class="view active" aria-labelledby="pageTitle"></section>
+      <section id="executiveView" class="view" aria-labelledby="pageTitle"></section>
+      <section id="annualView" class="view" aria-labelledby="pageTitle"></section>
+      <section id="monthlyView" class="view" aria-labelledby="pageTitle"></section>
       <section id="workdayView" class="view" aria-labelledby="pageTitle"></section>
       <section id="serviceView" class="view" aria-labelledby="pageTitle"></section>
       <section id="performanceView" class="view" aria-labelledby="pageTitle"></section>
@@ -110,14 +109,13 @@
       <section id="employeesView" class="view" aria-labelledby="pageTitle"></section>
       <section id="auditView" class="view" aria-labelledby="pageTitle"></section>
       <section id="systemView" class="view" aria-labelledby="pageTitle"></section>
-      <section id="dashboardView" class="view" aria-labelledby="pageTitle"></section>
-      <section id="executiveView" class="view" aria-labelledby="pageTitle"></section>
-      <section id="annualView" class="view" aria-labelledby="pageTitle"></section>
     </main>
   </div>
-
   <nav id="mobileNav" class="mobile-nav glass-card" aria-label="เมนูสำหรับมือถือ" hidden>
-    <button class="mobile-nav-item active" data-view="monthly" type="button"><i data-lucide="clipboard-check"></i><span>Monthly</span></button>
+    <button class="mobile-nav-item active" data-view="dashboard" type="button"><i data-lucide="layout-dashboard"></i><span>ภาพรวม</span></button>
+    <button class="mobile-nav-item" data-view="executive" type="button"><i data-lucide="chart-spline"></i><span>ผู้บริหาร</span></button>
+    <button class="mobile-nav-item" data-view="annual" type="button"><i data-lucide="calendar-range"></i><span>รายปี</span></button>
+    <button class="mobile-nav-item" data-view="monthly" type="button"><i data-lucide="clipboard-check"></i><span>Monthly</span></button>
     <button class="mobile-nav-item" data-view="workday" type="button"><i data-lucide="calendar-clock"></i><span>Workday</span></button>
     <button class="mobile-nav-item" data-view="service" type="button"><i data-lucide="badge-dollar-sign"></i><span>Incentive</span></button>
     <button class="mobile-nav-item" data-view="performance" type="button"><i data-lucide="chart-no-axes-combined"></i><span>Summary</span></button>

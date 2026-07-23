@@ -1278,7 +1278,7 @@ tbody tr:nth-child(even):hover td { background: rgba(226,246,251,.46); }
     left: 8px;
     right: 8px;
     bottom: 8px;
-    grid-template-columns: repeat(8, minmax(68px, 1fr));
+    grid-template-columns: repeat(11, minmax(68px, 1fr));
     gap: 2px;
     padding: 7px;
     border-radius: 21px;
@@ -1311,7 +1311,7 @@ tbody tr:nth-child(even):hover td { background: rgba(226,246,251,.46); }
 
 @media (max-width: 520px) {
   .topbar h1 { max-width: 185px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .mobile-nav { grid-template-columns: repeat(8, 72px); }
+  .mobile-nav { grid-template-columns: repeat(11, 72px); }
   .kpi-grid,
   .compact-kpi-grid { grid-template-columns: 1fr; }
   .form-actions,
@@ -1326,3 +1326,9 @@ tbody tr:nth-child(even):hover td { background: rgba(226,246,251,.46); }
   .page-description,
   .page-kicker { display: none !important; }
 }
+
+
+/* v1.0.2 — restore upper navigation and reorder only the requested workflow group */
+.overview-nav + .workflow-heading { margin-top: 4px; }
+.overview-nav .nav-item::after { content: ""; }
+.workflow-heading { padding-top: 18px; }
