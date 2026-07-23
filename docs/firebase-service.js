@@ -4,6 +4,12 @@
   const CONFIG = global.EMPLOYEE_HUB_FIREBASE_CONFIG || {};
   const SDK_VERSION = "12.16.0";
   const SDK_BASE = `https://www.gstatic.com/firebasejs/${SDK_VERSION}`;
+  const SYSTEM_COLLECTIONS = Object.freeze([
+    "profiles", "settings", "employees", "employeeNames", "evaluations",
+    "serviceIncentives", "hubSettings", "attendanceMonthly", "leaveRecords",
+    "workdaySettings", "dailyPerformanceEntries", "monthlyPerformanceOverrides",
+    "monthlyPerformanceStatus", "monthClosures", "auditLogs",
+  ]);
 
   let app = null;
   let auth = null;
@@ -27,7 +33,8 @@
       "auth/user-disabled": "บัญชีนี้ถูกระงับการใช้งาน",
       "auth/too-many-requests": "มีการเข้าสู่ระบบผิดหลายครั้ง กรุณาลองใหม่ภายหลัง",
       "auth/network-request-failed": "ไม่สามารถเชื่อมต่อ Firebase Authentication ได้",
-      "permission-denied": "ไม่มีสิทธิ์ดำเนินการกับข้อมูลนี้ กรุณาตรวจ Firestore Rules และโปรไฟล์ admin",
+      "permission-denied": "ไม่มีสิทธิ์ดำเนินการกับข้อมูลนี้ อาจเกิดจากรอบเดือนถูกล็อกหรือ Firestore Rules ไม่อนุญาต",
+      "MONTH_FINALIZED": "รอบเดือนนี้ได้รับการรับรองและล็อกแล้ว กรุณาเปิดรอบกลับมาแก้ไขก่อน",
       "unavailable": "Firestore ไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่",
       "failed-precondition": "Firestore ยังตั้งค่าไม่ครบ หรือ Query ต้องใช้ Index เพิ่มเติม",
       "already-exists": "มีข้อมูลนี้อยู่แล้ว",
@@ -210,6 +217,7 @@
       employeeId: String(row.employeeId || ""),
       year: Number(row.year),
       month: Number(row.month),
+      yearMonth: String(row.yearMonth || `${Number(row.year) - 543}-${String(Number(row.month) + 1).padStart(2, "0")}`),
       scores: Array.isArray(row.scores) ? row.scores.map(Number) : [],
       note: String(row.note || ""),
       source: String(row.source || "Performance Summary / Firebase"),
@@ -356,6 +364,7 @@
       id: snapshot.id,
       employeeId: String(row.employeeId || ""),
       date: String(row.date || ""),
+      yearMonth: String(row.yearMonth || String(row.date || "").slice(0, 7)),
       year: Number(row.year),
       month: Number(row.month),
       leaveType: String(row.leaveType || "other"),
@@ -463,6 +472,40 @@
     };
   }
 
+  function monthClosureFromSnapshot(snapshot, yearMonth = "") {
+    if (!snapshot.exists()) {
+      return { id: yearMonth, yearMonth, status: "OPEN", reason: "", summary: {}, version: 0, updatedAt: "", finalizedAt: "", reopenedAt: "" };
+    }
+    const row = snapshot.data();
+    return {
+      id: snapshot.id,
+      yearMonth: String(row.yearMonth || snapshot.id),
+      year: Number(row.year),
+      month: Number(row.month),
+      status: String(row.status || "OPEN"),
+      reason: String(row.reason || ""),
+      summary: row.summary && typeof row.summary === "object" ? row.summary : {},
+      version: Number(row.version) || 1,
+      updatedAt: toIso(row.updatedAt),
+      finalizedAt: toIso(row.finalizedAt),
+      reopenedAt: toIso(row.reopenedAt),
+      finalizedBy: String(row.finalizedBy || ""),
+      reopenedBy: String(row.reopenedBy || ""),
+    };
+  }
+
+  async function ensureMonthClosureEditable(transaction, yearMonth) {
+    const parsed = parseYearMonth(yearMonth);
+    const ref = firestoreApi.doc(db, "monthClosures", parsed.yearMonth);
+    const snapshot = await transaction.get(ref);
+    if (snapshot.exists() && String(snapshot.data().status || "") === "FINALIZED") {
+      const error = new Error("รอบเดือนนี้ได้รับการรับรองและล็อกแล้ว กรุณาเปิดรอบกลับมาแก้ไขก่อน");
+      error.code = "MONTH_FINALIZED";
+      throw error;
+    }
+    return snapshot;
+  }
+
   function normalizeMonthlyStatus(value) {
     const status = String(value || "").trim().toUpperCase();
     if (!MONTHLY_STATUS_IDS.includes(status)) throw new Error("สถานะประจำวันไม่ถูกต้อง");
@@ -506,6 +549,7 @@
   }
 
   async function ensureMonthlyMonthEditable(transaction, yearMonth) {
+    await ensureMonthClosureEditable(transaction, yearMonth);
     const statusRef = firestoreApi.doc(db, "monthlyPerformanceStatus", yearMonth);
     const statusSnapshot = await transaction.get(statusRef);
     if (statusSnapshot.exists() && String(statusSnapshot.data().status || "OPEN") === "CLOSED") {
@@ -549,6 +593,148 @@
       return monthlyStatusFromSnapshot(await firestoreApi.getDoc(firestoreApi.doc(db, "monthlyPerformanceStatus", parsed.yearMonth)), parsed.yearMonth);
     } catch (error) {
       throw friendlyError(error, "อ่านสถานะเดือนไม่สำเร็จ");
+    }
+  }
+
+
+  async function loadMonthClosure(yearMonth) {
+    assertReady();
+    const parsed = parseYearMonth(yearMonth);
+    try {
+      return monthClosureFromSnapshot(await firestoreApi.getDoc(firestoreApi.doc(db, "monthClosures", parsed.yearMonth)), parsed.yearMonth);
+    } catch (error) {
+      throw friendlyError(error, "อ่านสถานะรับรองรอบเดือนไม่สำเร็จ");
+    }
+  }
+
+  function normalizeClosureSummary(value) {
+    const source = value && typeof value === "object" ? value : {};
+    const integer = (key) => Math.max(0, Math.trunc(Number(source[key]) || 0));
+    return {
+      eligibleEmployeeCount: integer("eligibleEmployeeCount"),
+      attendanceComplete: integer("attendanceComplete"),
+      monthlyComplete: integer("monthlyComplete"),
+      scoreSyncComplete: integer("scoreSyncComplete"),
+      disciplineComplete: integer("disciplineComplete"),
+      gpaIncentiveComplete: integer("gpaIncentiveComplete"),
+      serviceIncentiveComplete: integer("serviceIncentiveComplete"),
+      monthlyValidationErrors: integer("monthlyValidationErrors"),
+      monthlyValidationWarnings: integer("monthlyValidationWarnings"),
+      requiredDone: integer("requiredDone"),
+      coreReady: source.coreReady === true,
+    };
+  }
+
+  async function finalizeMonthClosure(input) {
+    assertReady();
+    const uid = currentUid();
+    const parsed = parseYearMonth(input.yearMonth);
+    const expectedVersion = Math.max(0, Math.trunc(Number(input.expectedVersion) || 0));
+    const reason = String(input.note || "").trim().slice(0, 1000);
+    const summary = normalizeClosureSummary(input.summary);
+    if (!summary.coreReady || summary.requiredDone < 5) throw new Error("ขั้นตอนจำเป็นยังไม่ครบ ไม่สามารถรับรองรอบได้");
+    if (summary.eligibleEmployeeCount < 1 || summary.serviceIncentiveComplete !== summary.eligibleEmployeeCount) {
+      throw new Error("Service Incentive ต้องมีรายการครบทุกคนก่อนรับรองรอบ");
+    }
+    if (summary.monthlyValidationErrors !== 0) throw new Error("Monthly Performance ยังมีข้อผิดพลาด");
+    const ref = firestoreApi.doc(db, "monthClosures", parsed.yearMonth);
+    const monthlyStatusRef = firestoreApi.doc(db, "monthlyPerformanceStatus", parsed.yearMonth);
+    const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+    try {
+      await firestoreApi.runTransaction(db, async (transaction) => {
+        const [snapshot, monthlyStatusSnapshot] = await Promise.all([transaction.get(ref), transaction.get(monthlyStatusRef)]);
+        const existing = snapshot.exists() ? snapshot.data() : null;
+        const currentVersion = Number(existing?.version) || 0;
+        if (currentVersion !== expectedVersion) {
+          const conflict = new Error("สถานะรอบเดือนถูกแก้ไข กรุณาตรวจใหม่");
+          conflict.code = "VERSION_CONFLICT";
+          throw conflict;
+        }
+        if (existing?.status === "FINALIZED") throw new Error("รอบเดือนนี้ถูกล็อกแล้ว");
+        if (!monthlyStatusSnapshot.exists() || String(monthlyStatusSnapshot.data().status || "") !== "CLOSED") {
+          throw new Error("Monthly Performance ต้องอยู่ในสถานะ CLOSED ก่อนรับรองรอบ");
+        }
+        const payload = {
+          yearMonth: parsed.yearMonth,
+          year: parsed.year,
+          month: parsed.month,
+          status: "FINALIZED",
+          reason,
+          summary,
+          version: currentVersion + 1,
+          createdAt: existing?.createdAt || firestoreApi.serverTimestamp(),
+          createdBy: existing?.createdBy || uid,
+          updatedAt: firestoreApi.serverTimestamp(),
+          updatedBy: uid,
+          finalizedAt: firestoreApi.serverTimestamp(),
+          finalizedBy: uid,
+          ...(existing?.reopenedAt ? { reopenedAt: existing.reopenedAt } : {}),
+          ...(existing?.reopenedBy ? { reopenedBy: existing.reopenedBy } : {}),
+        };
+        transaction.set(ref, payload);
+        transaction.set(auditRef, {
+          actorId: uid,
+          action: "FINALIZE_MONTH_CLOSURE",
+          targetType: "monthClosure",
+          targetId: parsed.yearMonth,
+          before: existing || null,
+          after: { yearMonth: parsed.yearMonth, status: "FINALIZED", reason, summary, version: payload.version },
+          createdAt: firestoreApi.serverTimestamp(),
+        });
+      });
+      return monthClosureFromSnapshot(await firestoreApi.getDoc(ref), parsed.yearMonth);
+    } catch (error) {
+      if (error?.code === "VERSION_CONFLICT") throw error;
+      throw friendlyError(error, "รับรองและล็อกรอบเดือนไม่สำเร็จ");
+    }
+  }
+
+  async function reopenMonthClosure(input) {
+    assertReady();
+    const uid = currentUid();
+    const parsed = parseYearMonth(input.yearMonth);
+    const expectedVersion = Math.max(0, Math.trunc(Number(input.expectedVersion) || 0));
+    const reason = String(input.reason || "").trim().slice(0, 1000);
+    if (reason.length < 5) throw new Error("เหตุผลต้องมีอย่างน้อย 5 ตัวอักษร");
+    const ref = firestoreApi.doc(db, "monthClosures", parsed.yearMonth);
+    const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+    try {
+      await firestoreApi.runTransaction(db, async (transaction) => {
+        const snapshot = await transaction.get(ref);
+        if (!snapshot.exists()) throw new Error("ยังไม่มีรอบที่รับรองสำหรับเดือนนี้");
+        const existing = snapshot.data();
+        const currentVersion = Number(existing.version) || 0;
+        if (currentVersion !== expectedVersion) {
+          const conflict = new Error("สถานะรอบเดือนถูกแก้ไข กรุณาตรวจใหม่");
+          conflict.code = "VERSION_CONFLICT";
+          throw conflict;
+        }
+        if (String(existing.status || "") !== "FINALIZED") throw new Error("เดือนนี้ไม่ได้อยู่ในสถานะล็อก");
+        const payload = {
+          ...existing,
+          status: "REOPENED",
+          reason,
+          version: currentVersion + 1,
+          updatedAt: firestoreApi.serverTimestamp(),
+          updatedBy: uid,
+          reopenedAt: firestoreApi.serverTimestamp(),
+          reopenedBy: uid,
+        };
+        transaction.set(ref, payload);
+        transaction.set(auditRef, {
+          actorId: uid,
+          action: "REOPEN_MONTH_CLOSURE",
+          targetType: "monthClosure",
+          targetId: parsed.yearMonth,
+          before: existing,
+          after: { yearMonth: parsed.yearMonth, status: "REOPENED", reason, version: payload.version },
+          createdAt: firestoreApi.serverTimestamp(),
+        });
+      });
+      return monthClosureFromSnapshot(await firestoreApi.getDoc(ref), parsed.yearMonth);
+    } catch (error) {
+      if (error?.code === "VERSION_CONFLICT") throw error;
+      throw friendlyError(error, "เปิดรอบเดือนกลับมาแก้ไขไม่สำเร็จ");
     }
   }
 
@@ -786,6 +972,7 @@
     try {
       await firestoreApi.runTransaction(db, async (transaction) => {
         const snapshot = await transaction.get(ref);
+        await ensureMonthClosureEditable(transaction, yearMonth);
         const existing = snapshot.exists() ? snapshot.data() : null;
         const payload = {
           yearMonth, year, month, status, reason,
@@ -983,6 +1170,7 @@
     if (!Number.isInteger(month) || month < 0 || month > 11) throw new Error("เดือนประเมินไม่ถูกต้อง");
     if (note.length > 2000) throw new Error("หมายเหตุต้องไม่เกิน 2,000 ตัวอักษร");
 
+    const yearMonth = `${year - 543}-${String(month + 1).padStart(2, "0")}`;
     const id = performanceEvaluationId(year, employeeId, month);
     const ref = firestoreApi.doc(db, "evaluations", id);
     const employeeRef = firestoreApi.doc(db, "employees", employeeId);
@@ -994,6 +1182,7 @@
           transaction.get(ref),
         ]);
         if (!employeeSnapshot.exists()) throw new Error("ไม่พบพนักงานที่เลือก");
+        await ensureMonthClosureEditable(transaction, yearMonth);
         const existing = existingSnapshot.exists() ? existingSnapshot.data() : null;
         const currentVersion = Number(existing?.version) || 0;
         if (currentVersion !== expectedVersion) {
@@ -1005,6 +1194,7 @@
         const metadata = normalizePerformanceMetadata(input, existing);
         transaction.set(ref, {
           employeeId,
+          yearMonth,
           year,
           month,
           scores,
@@ -1085,6 +1275,7 @@
           transaction.get(ref),
         ]);
         if (!employeeSnapshot.exists()) throw new Error("ไม่พบพนักงานที่เลือก");
+        await ensureMonthClosureEditable(transaction, parsed.yearMonth);
         const existing = existingSnapshot.exists() ? existingSnapshot.data() : null;
         const currentVersion = Number(existing?.version) || 0;
         if (currentVersion !== expectedVersion) {
@@ -1100,6 +1291,7 @@
         before = existing ? { ...existing, createdAt: null, updatedAt: null } : null;
         transaction.set(ref, {
           employeeId,
+          yearMonth: parsed.yearMonth,
           year,
           month,
           scores,
@@ -1197,6 +1389,7 @@
           transaction.get(incentiveRef),
         ]);
         if (!evaluationSnapshot.exists()) throw new Error("ยังไม่มี Performance Summary ของพนักงานและเดือนนี้");
+        await ensureMonthClosureEditable(transaction, parsed.yearMonth);
         const evaluation = evaluationSnapshot.data();
         const evaluationVersion = Number(evaluation.version) || 0;
         if (evaluationVersion !== expectedEvaluationVersion) {
@@ -1533,6 +1726,7 @@
         ]);
         if (!employeeSnapshot.exists()) throw new Error("ไม่พบพนักงานที่เลือก");
         if (employeeSnapshot.data().isActive === false) throw new Error("พนักงานคนนี้ถูกปิดใช้งาน");
+        await ensureMonthClosureEditable(transaction, yearMonth);
 
         const existing = existingSnapshot.exists() ? existingSnapshot.data() : null;
         const currentVersion = Number(existing?.version) || 0;
@@ -1589,6 +1783,7 @@
       await firestoreApi.runTransaction(db, async (transaction) => {
         const snapshot = await transaction.get(ref);
         if (!snapshot.exists()) throw new Error("ไม่พบรายการที่ต้องการลบ");
+        await ensureMonthClosureEditable(transaction, String(snapshot.data().yearMonth || ""));
         transaction.delete(ref);
         transaction.set(auditRef, {
           actorId: uid,
@@ -1623,6 +1818,7 @@
         const [employeeSnapshot, existingSnapshot] = await Promise.all([transaction.get(employeeRef), transaction.get(ref)]);
         if (!employeeSnapshot.exists()) throw new Error("ไม่พบพนักงานที่เลือก");
         if (employeeSnapshot.data().isActive === false) throw new Error("พนักงานคนนี้ถูกปิดใช้งาน");
+        await ensureMonthClosureEditable(transaction, yearMonth);
         const existing = existingSnapshot.exists() ? existingSnapshot.data() : null;
         const currentVersion = Number(existing?.version) || 0;
         if (currentVersion !== expectedVersion) {
@@ -1665,6 +1861,7 @@
       await firestoreApi.runTransaction(db, async (transaction) => {
         const snapshot = await transaction.get(ref);
         if (!snapshot.exists()) throw new Error("ไม่พบข้อมูลเวลาสายที่ต้องการลบ");
+        await ensureMonthClosureEditable(transaction, String(snapshot.data().yearMonth || ""));
         transaction.delete(ref);
         transaction.set(auditRef, { actorId: uid, action: "DELETE_ATTENDANCE_MONTHLY", targetType: "attendanceMonthly", targetId: snapshot.id, before: snapshot.data(), after: null, createdAt: firestoreApi.serverTimestamp() });
       });
@@ -1679,6 +1876,7 @@
     const id = String(input.id || `leave_${crypto.randomUUID().replaceAll("-", "")}`);
     const employeeId = String(input.employeeId || "");
     const date = normalizeIsoDate(input.date, "วันที่ลา");
+    const yearMonth = date.slice(0, 7);
     const year = Number(date.slice(0, 4));
     const month = Number(date.slice(5, 7));
     const leaveType = normalizeLeaveType(input.leaveType);
@@ -1696,13 +1894,14 @@
         const [employeeSnapshot, existingSnapshot] = await Promise.all([transaction.get(employeeRef), transaction.get(ref)]);
         if (!employeeSnapshot.exists()) throw new Error("ไม่พบพนักงานที่เลือก");
         if (employeeSnapshot.data().isActive === false) throw new Error("พนักงานคนนี้ถูกปิดใช้งาน");
+        await ensureMonthClosureEditable(transaction, yearMonth);
         const existing = existingSnapshot.exists() ? existingSnapshot.data() : null;
         const currentVersion = Number(existing?.version) || 0;
         if (currentVersion !== expectedVersion) {
           const conflict = new Error("VERSION_CONFLICT"); conflict.code = "VERSION_CONFLICT"; throw conflict;
         }
         const payload = {
-          employeeId, date, year, month, leaveType, days, note, excludeHolidays,
+          employeeId, date, yearMonth, year, month, leaveType, days, note, excludeHolidays,
           source: String(existing?.source || "Employee Hub / Firebase"),
           ...(existing?.sourceRecordId ? { sourceRecordId: existing.sourceRecordId } : {}),
           ...(existing?.originalLeaveType ? { originalLeaveType: existing.originalLeaveType } : {}),
@@ -1733,6 +1932,7 @@
       await firestoreApi.runTransaction(db, async (transaction) => {
         const snapshot = await transaction.get(ref);
         if (!snapshot.exists()) throw new Error("ไม่พบรายการวันที่ต้องการลบ");
+        await ensureMonthClosureEditable(transaction, String(snapshot.data().yearMonth || String(snapshot.data().date || "").slice(0, 7)));
         transaction.delete(ref);
         transaction.set(auditRef, { actorId: uid, action: "DELETE_LEAVE_RECORD", targetType: "leaveRecord", targetId: snapshot.id, before: snapshot.data(), after: null, createdAt: firestoreApi.serverTimestamp() });
       });
@@ -1867,6 +2067,9 @@
     loadDailyPerformanceEntries,
     loadMonthlyPerformanceOverrides,
     loadMonthlyPerformanceMonthStatus,
+    loadMonthClosure,
+    finalizeMonthClosure,
+    reopenMonthClosure,
     loadMonthlyPerformanceSnapshot,
     saveDailyPerformanceEntry,
     saveDailyPerformanceEntriesBatch,

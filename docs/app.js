@@ -385,7 +385,7 @@ function renderDashboard() {
         ${moduleCard({ icon: "chart-no-axes-combined", title: "Performance Summary", description: "บันทึกคะแนน KPI ประวัติ รายงาน และ Employee 360° ใน Web เดียว", status: "ใช้งานได้", statusClass: "badge-ready", view: "performance" })}
         ${moduleCard({ icon: "calendar-clock", title: "Workday Insight", description: "เวลาสายรายเดือน วันลา และสรุปสิทธิ์", status: workdayReady ? "ใช้งานได้" : "ยังไม่มีข้อมูล", statusClass: workdayReady ? "badge-ready" : "badge-progress", view: "workday" })}
         ${moduleCard({ icon: "clipboard-check", title: "Monthly Performance", description: "คะแนนรายวัน สถานะการทำงาน วันทำงานจริง และการปิดเดือน", status: state.migrationStatus?.monthlyPerformanceMigrationId ? "ใช้งานได้" : "ยังไม่มีข้อมูล", statusClass: state.migrationStatus?.monthlyPerformanceMigrationId ? "badge-ready" : "badge-progress", view: "monthly" })}
-        ${moduleCard({ icon: "calendar-check-2", title: "ศูนย์ปิดรอบเดือน", description: "ตรวจ Workday, Monthly, Score Sync, GPA → เงินประเมิน และ Service Incentive ในหน้าเดียว", status: "พร้อมตรวจ", statusClass: "badge-ready", view: "closing" })}
+        ${moduleCard({ icon: "calendar-check-2", title: "ศูนย์ปิดรอบเดือน", description: "ตรวจ รับรอง และล็อกข้อมูลประจำเดือนหลังทุกโมดูลครบถ้วน", status: "พร้อมตรวจ", statusClass: "badge-ready", view: "closing" })}
         ${moduleCard({ icon: "shield-check", title: "ระบบและสำรองข้อมูล", description: "ตรวจความสมบูรณ์ของข้อมูล ดาวน์โหลด Backup และตรวจรายการ Production", status: state.systemHealth?.status === "ok" ? "ระบบปกติ" : "พร้อมตรวจ", statusClass: state.systemHealth?.status === "ok" ? "badge-ready" : "badge-progress", view: "system" })}
       </div>
 
@@ -811,7 +811,7 @@ function renderPerformance() {
   els.performanceView.innerHTML = `
     <div class="page-grid">
       <article class="panel performance-hero">
-        <div class="panel-head"><div><h2>Performance Summary</h2><p>${legacyAnnual ? "ข้อมูลปี 2568 เป็นคะแนนสรุปรายปีจากไฟล์ต้นฉบับ และเปิดดูแบบ Read-only" : "บันทึกและวิเคราะห์คะแนน KPI รายเดือนจากฐานข้อมูล Firebase เดิม"}</p></div><span class="badge badge-ready">Phase 6.1</span></div>
+        <div class="panel-head"><div><h2>Performance Summary</h2><p>${legacyAnnual ? "ข้อมูลปี 2568 เป็นคะแนนสรุปรายปีจากไฟล์ต้นฉบับ และเปิดดูแบบ Read-only" : "บันทึกและวิเคราะห์คะแนน KPI รายเดือนจากฐานข้อมูล Firebase เดิม"}</p></div><span class="badge badge-ready">Phase 6.2</span></div>
         <div class="performance-toolbar">
           <div class="field compact-field"><label for="performanceYearPicker">ปีประเมิน</label><select id="performanceYearPicker">${performanceYearOptions()}</select></div>
           <div class="field compact-field"><label for="performanceMonthPicker">${legacyAnnual ? "รูปแบบข้อมูล" : "เดือน"}</label><select id="performanceMonthPicker" ${legacyAnnual ? "disabled" : ""}>${legacyAnnual ? '<option value="annual">สรุปรายปี</option>' : performanceMonthOptions()}</select></div>
@@ -1241,7 +1241,7 @@ function renderPerformanceIncentiveSync() {
   return `
     <div class="page-grid">
       <article class="panel score-sync-hero">
-        <div class="panel-head"><div><h2>GPA → Service Incentive</h2><p>คำนวณเงินจาก GPA ที่กรอกครบแล้ว และส่งไปช่อง “ประเมิน” ของเดือนเดียวกัน</p></div><span class="badge badge-ready">Phase 6.1</span></div>
+        <div class="panel-head"><div><h2>GPA → Service Incentive</h2><p>คำนวณเงินจาก GPA ที่กรอกครบแล้ว และส่งไปช่อง “ประเมิน” ของเดือนเดียวกัน</p></div><span class="badge badge-ready">Phase 6.2</span></div>
         <div class="kpi-grid compact-kpi-grid">
           <article class="kpi-card"><div class="kpi-head"><span>พร้อมส่ง</span><span class="kpi-icon"><i data-lucide="send"></i></span></div><div class="kpi-value">${readyCount}</div></article>
           <article class="kpi-card"><div class="kpi-head"><span>ส่งแล้ว</span><span class="kpi-icon"><i data-lucide="circle-check"></i></span></div><div class="kpi-value">${syncedCount}</div></article>
@@ -2653,11 +2653,12 @@ async function refreshClosingData({ force = false, quiet = false } = {}) {
   if (!quiet) setSyncStatus("syncing", "กำลังตรวจรอบเดือน");
   if (state.currentView === "closing") renderClosing();
   try {
-    const [syncSnapshot, incentives] = await Promise.all([
+    const [syncSnapshot, incentives, closure] = await Promise.all([
       window.EmployeeHubDatabase.loadPerformanceScoreSyncSnapshot(key),
       window.EmployeeHubDatabase.loadServiceIncentives(key),
+      window.EmployeeHubDatabase.loadMonthClosure(key),
     ]);
-    state.closingData = { syncSnapshot, incentives };
+    state.closingData = { syncSnapshot, incentives, closure };
     state.closingDataKey = key;
     setSyncStatus("online", "เชื่อมต่อแล้ว");
   } catch (error) {
@@ -2676,6 +2677,8 @@ function buildClosingSummary() {
   const eligibleEmployees = employeesEligibleForMonth(state.closingMonth);
   const eligibleIds = new Set(eligibleEmployees.map((employee) => employee.id));
   const snapshot = data.syncSnapshot;
+  const closure = data.closure || { yearMonth: state.closingMonth, status: "OPEN", version: 0, reason: "", updatedAt: "" };
+  const finalized = String(closure.status || "OPEN") === "FINALIZED";
   const { performanceMonth } = closingMonthParts(state.closingMonth);
   const syncRows = buildPerformanceSyncRowsFromData(snapshot, performanceMonth, eligibleEmployees);
   const attendanceByEmployee = new Map((snapshot.attendance || []).filter((row) => eligibleIds.has(row.employeeId)).map((row) => [row.employeeId, row]));
@@ -2763,7 +2766,13 @@ function buildClosingSummary() {
   ];
   const requiredDone = requiredSteps.filter((step) => step.done).length;
   const coreReady = requiredDone === requiredSteps.length;
+  const serviceComplete = eligibleEmployees.length > 0 && incentiveCount === eligibleEmployees.length;
+  const canFinalize = coreReady && serviceComplete && !finalized;
   const operationalDone = [...requiredSteps, ...recommendedSteps].filter((step) => step.done).length;
+  const finalizeBlockers = [
+    ...requiredSteps.filter((step) => !step.done).map((step) => step.title.replace(/^\d+\.\s*/, "")),
+    ...(serviceComplete ? [] : ["Service Incentive ต้องมีรายการครบทุกคน"]),
+  ];
   const employees = eligibleEmployees.map((employee) => {
     const syncRow = syncRows.find((row) => row.employee.id === employee.id);
     const attendance = attendanceByEmployee.get(employee.id) || null;
@@ -2791,6 +2800,11 @@ function buildClosingSummary() {
     requiredDone,
     operationalDone,
     coreReady,
+    serviceComplete,
+    canFinalize,
+    finalized,
+    closure,
+    finalizeBlockers,
     employees,
     counts: { attendanceComplete, monthlyComplete, syncedCount, disciplineCount, gpaIncentiveCount, incentiveCount },
   };
@@ -2813,19 +2827,107 @@ function closingCellBadge(done, doneText = "ครบ", pendingText = "ขาด
   return `<span class="badge ${done ? "badge-ready" : "badge-danger"}">${done ? doneText : pendingText}</span>`;
 }
 
+
+function closingCertificationSummary(summary) {
+  return {
+    eligibleEmployeeCount: summary.eligibleEmployees.length,
+    attendanceComplete: summary.counts.attendanceComplete,
+    monthlyComplete: summary.counts.monthlyComplete,
+    scoreSyncComplete: summary.counts.syncedCount,
+    disciplineComplete: summary.counts.disciplineCount,
+    gpaIncentiveComplete: summary.counts.gpaIncentiveCount,
+    serviceIncentiveComplete: summary.counts.incentiveCount,
+    monthlyValidationErrors: summary.validation.counts.error,
+    monthlyValidationWarnings: summary.validation.counts.warning,
+    requiredDone: summary.requiredDone,
+    coreReady: summary.coreReady,
+  };
+}
+
+async function finalizeClosingMonth(summary = buildClosingSummary()) {
+  if (!summary) return showToast("ยังไม่มีข้อมูลสำหรับรับรองรอบเดือน", "warning");
+  if (summary.finalized) return showToast("เดือนนี้ถูกล็อกเรียบร้อยแล้ว", "warning");
+  if (!summary.canFinalize) {
+    const details = summary.finalizeBlockers.slice(0, 4).join(" · ");
+    return showToast(`ยังรับรองรอบเดือนไม่ได้${details ? `: ${details}` : ""}`, "warning", 8000);
+  }
+  const note = window.prompt(`หมายเหตุการรับรองรอบ ${state.closingMonth} (เว้นว่างได้):`, "");
+  if (note === null) return;
+  const confirmed = window.confirm(
+    `ยืนยันรับรองและล็อกรอบ ${state.closingMonth} หรือไม่?\n\n` +
+    "หลังล็อกแล้ว ระบบจะป้องกันการแก้ไข Workday, วันลา, Monthly Performance, Performance Summary และ Service Incentive ของเดือนนี้ จนกว่าจะเปิดรอบกลับมาโดยระบุเหตุผล"
+  );
+  if (!confirmed) return;
+  setBusy(true, "กำลังรับรองและล็อกรอบเดือน");
+  try {
+    const closure = await window.EmployeeHubDatabase.finalizeMonthClosure({
+      yearMonth: state.closingMonth,
+      expectedVersion: summary.closure?.version || 0,
+      note,
+      summary: closingCertificationSummary(summary),
+    });
+    if (state.closingData) state.closingData.closure = closure;
+    state.closingDataKey = "";
+    showToast(`รับรองและล็อกรอบ ${state.closingMonth} เรียบร้อยแล้ว`);
+    await refreshClosingData({ force: true, quiet: true });
+  } catch (error) {
+    showToast(error.message || "รับรองรอบเดือนไม่สำเร็จ", "error", 8000);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function reopenClosingMonth(summary = buildClosingSummary()) {
+  if (!summary?.finalized) return showToast("เดือนนี้ยังไม่ได้ล็อกรอบ", "warning");
+  const reason = window.prompt(`กรุณาระบุเหตุผลในการเปิดรอบ ${state.closingMonth} กลับมาแก้ไข:`) || "";
+  if (reason.trim().length < 5) return showToast("เหตุผลต้องมีอย่างน้อย 5 ตัวอักษร", "warning");
+  if (!window.confirm(`ยืนยันเปิดรอบ ${state.closingMonth} กลับมาแก้ไขหรือไม่? การดำเนินการนี้จะถูกบันทึกใน Audit Log`)) return;
+  setBusy(true, "กำลังเปิดรอบกลับมาแก้ไข");
+  try {
+    const closure = await window.EmployeeHubDatabase.reopenMonthClosure({
+      yearMonth: state.closingMonth,
+      expectedVersion: summary.closure?.version || 0,
+      reason,
+    });
+    if (state.closingData) state.closingData.closure = closure;
+    state.closingDataKey = "";
+    showToast(`เปิดรอบ ${state.closingMonth} กลับมาแก้ไขแล้ว`, "warning");
+    await refreshClosingData({ force: true, quiet: true });
+  } catch (error) {
+    showToast(error.message || "เปิดรอบกลับมาไม่สำเร็จ", "error", 8000);
+  } finally {
+    setBusy(false);
+  }
+}
+
 function renderClosing() {
   const summary = buildClosingSummary();
   const firstLoading = state.closingLoading && !summary;
+  const closureBadge = !summary
+    ? '<span class="badge badge-progress">กำลังตรวจ</span>'
+    : summary.finalized
+      ? '<span class="badge badge-ready">รับรองและล็อกแล้ว</span>'
+      : String(summary.closure?.status || "") === "REOPENED"
+        ? '<span class="badge badge-warning">เปิดรอบเพื่อแก้ไข</span>'
+        : `<span class="badge ${summary.canFinalize ? "badge-ready" : "badge-danger"}">${summary.canFinalize ? "พร้อมรับรอง" : "ยังมีรายการค้าง"}</span>`;
+  const closurePanel = summary ? `
+    <article class="panel closing-certification ${summary.finalized ? "closing-certification-final" : ""}">
+      <div class="panel-head"><div><h2>การรับรองรอบเดือน</h2><p>ล็อกข้อมูลสำคัญของเดือนหลังตรวจครบทุกโมดูล</p></div><span class="badge ${summary.finalized ? "badge-ready" : String(summary.closure?.status || "") === "REOPENED" ? "badge-warning" : "badge-planned"}">${summary.finalized ? "FINALIZED" : String(summary.closure?.status || "OPEN")}</span></div>
+      ${summary.finalized ? `<div class="notice notice-success"><i data-lucide="shield-check"></i><div><strong>รอบเดือนนี้ได้รับการรับรองและล็อกแล้ว</strong><br>รับรองเมื่อ ${escapeHtml(formatDate(summary.closure.finalizedAt || summary.closure.updatedAt))}${summary.closure.reason ? `<br>หมายเหตุ: ${escapeHtml(summary.closure.reason)}` : ""}</div></div>` : String(summary.closure?.status || "") === "REOPENED" ? `<div class="notice notice-warning"><i data-lucide="lock-keyhole-open"></i><div><strong>รอบนี้ถูกเปิดกลับมาแก้ไข</strong><br>เหตุผล: ${escapeHtml(summary.closure.reason || "ไม่ระบุ")}<br>เมื่อแก้ไขเสร็จ ต้องตรวจทุกขั้นตอนและรับรองรอบใหม่อีกครั้ง</div></div>` : summary.canFinalize ? `<div class="notice notice-info"><i data-lucide="badge-check"></i><div>ข้อมูลจำเป็นและ Service Incentive ครบแล้ว สามารถกด <strong>รับรองและล็อกรอบ</strong> ได้</div></div>` : `<div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div><strong>ยังรับรองรอบไม่ได้</strong><br>${escapeHtml(summary.finalizeBlockers.join(" · ") || "ยังมีรายการค้าง")}</div></div>`}
+      <div class="form-actions closing-certification-actions">${summary.finalized ? `<button id="reopenClosingMonthButton" class="button button-secondary" type="button"><i data-lucide="lock-keyhole-open"></i>เปิดรอบกลับมาแก้ไข</button>` : `<button id="finalizeClosingMonthButton" class="button button-primary" type="button" ${summary.canFinalize ? "" : "disabled"}><i data-lucide="shield-check"></i>รับรองและล็อกรอบ</button>`}</div>
+    </article>` : "";
+
   els.closingView.innerHTML = `
     <div class="page-grid">
       <article class="panel closing-hero">
-        <div class="panel-head"><div><p class="eyebrow">MONTH-END CONTROL</p><h2>ศูนย์ปิดรอบเดือน</h2><p>ตรวจขั้นตอนสำคัญก่อนสรุปคะแนนและสำรองข้อมูลประจำเดือน</p></div>${summary ? `<span class="badge ${summary.coreReady ? "badge-ready" : "badge-danger"}">${summary.coreReady ? "รอบประเมินพร้อม" : "ยังมีรายการค้าง"}</span>` : `<span class="badge badge-progress">กำลังตรวจ</span>`}</div>
+        <div class="panel-head"><div><p class="eyebrow">MONTH-END CERTIFICATION</p><h2>ศูนย์ปิดรอบเดือน</h2><p>ตรวจ รับรอง และล็อกข้อมูลประจำเดือนอย่างเป็นทางการ</p></div>${closureBadge}</div>
         <div class="closing-toolbar"><div class="field compact-field"><label for="closingMonthPicker">เดือนที่ตรวจ</label><input id="closingMonthPicker" type="month" value="${escapeHtml(state.closingMonth)}" /></div><div class="panel-actions"><button id="refreshClosingButton" class="button button-secondary" type="button"><i data-lucide="refresh-cw"></i>ตรวจใหม่</button><button id="exportClosingButton" class="button button-primary" type="button" ${summary ? "" : "disabled"}><i data-lucide="download"></i>Export สถานะ</button></div></div>
-        ${summary ? `<div class="kpi-grid compact-kpi-grid closing-kpis"><article class="kpi-card"><div class="kpi-head"><span>ขั้นตอนจำเป็น</span><span class="kpi-icon"><i data-lucide="list-checks"></i></span></div><div class="kpi-value">${summary.requiredDone}/5</div><div class="kpi-note">ต้องครบก่อนสรุปรอบประเมิน</div></article><article class="kpi-card"><div class="kpi-head"><span>พนักงานในรอบ</span><span class="kpi-icon"><i data-lucide="users-round"></i></span></div><div class="kpi-value">${summary.eligibleEmployees.length}</div><div class="kpi-note">อ้างอิงวันที่เริ่มงาน</div></article><article class="kpi-card"><div class="kpi-head"><span>Monthly Error</span><span class="kpi-icon"><i data-lucide="triangle-alert"></i></span></div><div class="kpi-value ${summary.validation.counts.error ? "negative" : ""}">${summary.validation.counts.error}</div><div class="kpi-note">คำเตือน ${summary.validation.counts.warning}</div></article><article class="kpi-card"><div class="kpi-head"><span>งานทั้งหมด</span><span class="kpi-icon"><i data-lucide="gauge"></i></span></div><div class="kpi-value">${summary.operationalDone}/7</div><div class="kpi-note">รวม Incentive และ Backup</div></article></div>` : ""}
+        ${summary ? `<div class="kpi-grid compact-kpi-grid closing-kpis"><article class="kpi-card"><div class="kpi-head"><span>ขั้นตอนจำเป็น</span><span class="kpi-icon"><i data-lucide="list-checks"></i></span></div><div class="kpi-value">${summary.requiredDone}/5</div><div class="kpi-note">ต้องครบก่อนรับรองรอบ</div></article><article class="kpi-card"><div class="kpi-head"><span>พนักงานในรอบ</span><span class="kpi-icon"><i data-lucide="users-round"></i></span></div><div class="kpi-value">${summary.eligibleEmployees.length}</div><div class="kpi-note">อ้างอิงวันที่เริ่มงาน</div></article><article class="kpi-card"><div class="kpi-head"><span>Service Incentive</span><span class="kpi-icon"><i data-lucide="badge-dollar-sign"></i></span></div><div class="kpi-value">${summary.counts.incentiveCount}/${summary.eligibleEmployees.length}</div><div class="kpi-note">ต้องครบก่อนล็อกรอบ</div></article><article class="kpi-card"><div class="kpi-head"><span>สถานะรอบ</span><span class="kpi-icon"><i data-lucide="${summary.finalized ? "lock-keyhole" : "lock-keyhole-open"}"></i></span></div><div class="kpi-value closing-status-text">${summary.finalized ? "LOCKED" : String(summary.closure?.status || "OPEN")}</div><div class="kpi-note">Version ${summary.closure?.version || 0}</div></article></div>` : ""}
       </article>
+      ${closurePanel}
       ${firstLoading ? `<div class="loading-skeleton"></div>` : summary ? `
-      <article class="panel"><div class="panel-head"><div><h2>ขั้นตอนจำเป็น</h2><p>ระบบจะถือว่ารอบประเมินพร้อมเมื่อครบทั้ง 5 ขั้นตอน</p></div></div><div class="closing-step-grid">${summary.requiredSteps.map((step) => renderClosingStep(step, true)).join("")}</div></article>
-      <article class="panel"><div class="panel-head"><div><h2>รายการแนะนำหลังปิดรอบ</h2><p>ไม่บล็อกการสรุปคะแนน แต่ช่วยให้ข้อมูลประจำเดือนสมบูรณ์และกู้คืนได้</p></div></div><div class="closing-step-grid">${summary.recommendedSteps.map((step) => renderClosingStep(step, false)).join("")}</div></article>
+      <article class="panel"><div class="panel-head"><div><h2>ขั้นตอนจำเป็น</h2><p>ต้องครบทั้ง 5 ขั้นตอนก่อนรับรองและล็อกรอบ</p></div></div><div class="closing-step-grid">${summary.requiredSteps.map((step) => renderClosingStep(step, true)).join("")}</div></article>
+      <article class="panel"><div class="panel-head"><div><h2>รายการประกอบการปิดรอบ</h2><p>Service Incentive ต้องครบก่อนล็อก ส่วน Backup ควรทำทันทีหลังรับรอง</p></div></div><div class="closing-step-grid">${summary.recommendedSteps.map((step) => renderClosingStep(step, step.id === "service")).join("")}</div></article>
       <article class="panel"><div class="panel-head"><div><h2>ตรวจรายบุคคล</h2><p>ค้นหารายการที่ยังขาดได้ในตารางเดียว</p></div></div><div class="table-wrap closing-matrix"><table><thead><tr><th>พนักงาน</th><th>Workday</th><th>Monthly</th><th>Score Sync</th><th>กฎระเบียบ</th><th>GPA → ประเมิน</th><th>Incentive</th></tr></thead><tbody>${summary.employees.map((row) => `<tr><td><strong>${escapeHtml(row.employee.employeeCode)}</strong><br><small>${escapeHtml(row.employee.fullName)}</small></td><td>${closingCellBadge(row.attendanceDone, row.attendance ? `${row.attendance.lateScore} คะแนน` : "ครบ", row.attendance ? "คะแนนไม่ถูกต้อง" : "ไม่มีข้อมูล")}</td><td>${closingCellBadge(row.monthly, "มีข้อมูล", "ไม่มีข้อมูล")}</td><td><span class="badge ${performanceSyncStatusBadge(row.syncRow?.status)}">${escapeHtml(row.syncRow?.reason || "ยังไม่มีข้อมูล")}</span></td><td>${closingCellBadge(row.disciplineDone, row.syncRow?.evaluation?.scores?.[5] ? `${row.syncRow.evaluation.scores[5]} คะแนน` : "กรอกแล้ว", "รอกรอก")}</td><td><span class="badge ${performanceIncentiveStatusBadge(row.performanceIncentive?.status)}">${escapeHtml(row.performanceIncentive?.reason || "ยังไม่มีข้อมูล")}</span></td><td>${closingCellBadge(Boolean(row.incentive), row.incentive ? formatMoney(row.incentive.totalAmount) : "ครบ", "ไม่มีรายการ")}</td></tr>`).join("") || `<tr><td colspan="7"><div class="empty-state"><i data-lucide="users"></i><p>ไม่พบพนักงานสำหรับเดือนนี้</p></div></td></tr>`}</tbody></table></div></article>
       ` : `<article class="panel"><div class="empty-state"><i data-lucide="calendar-search"></i><p>กำลังโหลดข้อมูลสำหรับปิดรอบเดือน</p></div></article>`}
     </div>`;
@@ -2838,6 +2940,8 @@ function renderClosing() {
   });
   document.getElementById("refreshClosingButton")?.addEventListener("click", () => refreshClosingData({ force: true }));
   document.getElementById("exportClosingButton")?.addEventListener("click", exportClosingStatusCsv);
+  document.getElementById("finalizeClosingMonthButton")?.addEventListener("click", () => void finalizeClosingMonth(summary));
+  document.getElementById("reopenClosingMonthButton")?.addEventListener("click", () => void reopenClosingMonth(summary));
   els.closingView.querySelectorAll(".closing-step-action").forEach((button) => button.addEventListener("click", () => openClosingAction(button.dataset.closingAction, summary)));
   ensureIcons();
 }
@@ -2893,9 +2997,11 @@ function openClosingAction(action, summary = buildClosingSummary()) {
 function exportClosingStatusCsv() {
   const summary = buildClosingSummary();
   if (!summary) return showToast("ยังไม่มีข้อมูลสำหรับ Export", "warning");
-  const rows = [["เดือน", "รหัสพนักงาน", "ชื่อพนักงาน", "Workday", "คะแนนเวลา", "Monthly", "Score Sync", "กฎระเบียบ", "คะแนนกฎระเบียบ", "GPA", "เงินประเมินตาม GPA", "สถานะเงินประเมิน", "Service Incentive"]];
+  const rows = [["เดือน", "สถานะรับรอง", "Version รอบ", "รหัสพนักงาน", "ชื่อพนักงาน", "Workday", "คะแนนเวลา", "Monthly", "Score Sync", "กฎระเบียบ", "คะแนนกฎระเบียบ", "GPA", "เงินประเมินตาม GPA", "สถานะเงินประเมิน", "Service Incentive"]];
   summary.employees.forEach((row) => rows.push([
     state.closingMonth,
+    summary.finalized ? "FINALIZED" : String(summary.closure?.status || "OPEN"),
+    summary.closure?.version || 0,
     row.employee.employeeCode,
     row.employee.fullName,
     row.attendance ? "ครบ" : "ไม่มีข้อมูล",
@@ -2926,6 +3032,7 @@ const SYSTEM_COLLECTION_LABELS = Object.freeze({
   dailyPerformanceEntries: "Monthly Performance รายวัน",
   monthlyPerformanceOverrides: "วันทำงาน Override",
   monthlyPerformanceStatus: "สถานะปิดเดือน",
+  monthClosures: "การรับรองและล็อกรอบเดือน",
   auditLogs: "Audit Log",
 });
 
