@@ -3,6 +3,7 @@
 const VIEW_TITLES = Object.freeze({
   dashboard: "ภาพรวมระบบ",
   executive: "Executive Dashboard",
+  annual: "รายงานประจำปี",
   employees: "ฐานข้อมูลพนักงานกลาง",
   service: "Service Incentive",
   performance: "Performance Summary",
@@ -135,6 +136,11 @@ const state = {
   executiveData: null,
   executiveDataKey: "",
   executiveLoading: false,
+  annualYear: new Date().getFullYear() + 543,
+  annualEmployeeId: "all",
+  annualData: null,
+  annualDataKey: "",
+  annualLoading: false,
   closingMonth: currentYearMonth(),
   closingData: null,
   closingDataKey: "",
@@ -151,7 +157,7 @@ function cacheElements() {
   [
     "authGate", "authMessage", "loginForm", "loginEmail", "loginPassword", "loginButton", "authConfigHelp",
     "appShell", "mobileNav", "pageTitle", "databaseStatusDot", "databaseStatusLabel", "accountName", "accountRole",
-    "logoutButton", "refreshButton", "syncBadge", "dashboardView", "executiveView", "employeesView", "serviceView", "performanceView",
+    "logoutButton", "refreshButton", "syncBadge", "dashboardView", "executiveView", "annualView", "employeesView", "serviceView", "performanceView",
     "workdayView", "monthlyView", "closingView", "systemView", "modalRoot", "toastRegion",
   ].forEach((id) => { els[id] = document.getElementById(id); });
 }
@@ -282,6 +288,7 @@ function showView(viewName) {
   window.location.hash = viewName;
   renderCurrentView();
   if (viewName === "executive") void refreshExecutiveData({ force: true, quiet: true });
+  if (viewName === "annual") void refreshAnnualData({ force: true, quiet: true });
   if (viewName === "performance") void refreshPerformanceData().then(() => {
     if (state.performanceTab === "sync" && !isLegacyAnnualPerformanceYear()) void refreshPerformanceSyncData();
     if (state.performanceTab === "incentive" && !isLegacyAnnualPerformanceYear()) void refreshPerformanceIncentiveData();
@@ -328,6 +335,7 @@ function renderCurrentView() {
   const renderers = {
     dashboard: renderDashboard,
     executive: renderExecutive,
+    annual: renderAnnualReport,
     employees: renderEmployees,
     service: renderService,
     performance: renderPerformance,
@@ -388,6 +396,7 @@ function renderDashboard() {
 
       <div class="module-grid">
         ${moduleCard({ icon: "chart-spline", title: "Executive Dashboard", description: "KPI ผู้บริหาร แนวโน้ม รายการติดตาม และความเสี่ยงในหน้าเดียว", status: "พร้อมใช้งาน", statusClass: "badge-ready", view: "executive" })}
+        ${moduleCard({ icon: "calendar-range", title: "รายงานประจำปี", description: "สรุป GPA เงินพิเศษ เวลาสาย วันลา และอันดับตลอดทั้งปี", status: "พร้อมใช้งาน", statusClass: "badge-ready", view: "annual" })}
         ${moduleCard({ icon: "users-round", title: "Employee Master", description: "รายชื่อ รหัสพนักงาน วันที่เริ่มงาน และ Legacy IDs", status: state.employees.length ? "เชื่อมต่อแล้ว" : "ยังไม่มีข้อมูล", statusClass: state.employees.length ? "badge-ready" : "badge-progress", view: "employees" })}
         ${moduleCard({ icon: "badge-dollar-sign", title: "Service Incentive", description: "บันทึกยอดขาย ประเมิน เวลา และยอดรวมรายเดือน", status: state.incentives.length ? "ใช้งานได้" : "ยังไม่มีข้อมูล", statusClass: state.incentives.length ? "badge-ready" : "badge-progress", view: "service" })}
         ${moduleCard({ icon: "chart-no-axes-combined", title: "Performance Summary", description: "บันทึกคะแนน KPI ประวัติ รายงาน และ Employee 360° ใน Web เดียว", status: "ใช้งานได้", statusClass: "badge-ready", view: "performance" })}
@@ -682,6 +691,270 @@ function exportExecutiveSummaryCsv() {
     rows.push([state.executiveMonth, employee.employeeCode, employee.fullName, performance ? roundedPerformanceGpa(performance.gpa) : "", performance ? Math.round(performance.percentage * 100) / 100 : "", attendance?.lateMinutes ?? "", leaveDays, incentive?.totalAmount ?? "", risk?.issues?.join(" | ") || "", summary.closureStatus]);
   });
   downloadCsv(rows, `executive-summary-${state.executiveMonth}.csv`);
+}
+
+
+/* Phase 8 · Annual Reports */
+function annualGregorianYear(year = state.annualYear) {
+  const value = Math.trunc(Number(year) || (new Date().getFullYear() + 543));
+  return value - 543;
+}
+
+function annualYearOptions() {
+  const years = new Set([
+    PERFORMANCE_LEGACY_ANNUAL_YEAR,
+    new Date().getFullYear() + 543,
+    Number(state.performanceSettings?.activeYear) || 0,
+    ...(state.performanceSettings?.years || []),
+    ...(state.evaluationSummary?.years || []),
+    ...state.incentives.map((record) => Number(String(record.yearMonth || "").slice(0, 4)) + 543),
+  ].filter((year) => Number.isFinite(year) && year >= 2500 && year <= 3000));
+  years.add(Number(state.annualYear));
+  return [...years].sort((a, b) => b - a).map((year) => `<option value="${year}" ${year === Number(state.annualYear) ? "selected" : ""}>${year}</option>`).join("");
+}
+
+function annualEmployeeOptions() {
+  const sorted = [...state.employees].sort((a, b) => (Number(a.sortOrder) || 999999) - (Number(b.sortOrder) || 999999) || a.fullName.localeCompare(b.fullName, "th"));
+  return [`<option value="all" ${state.annualEmployeeId === "all" ? "selected" : ""}>พนักงานทุกคน</option>`, ...sorted.map((employee) => `<option value="${escapeHtml(employee.id)}" ${state.annualEmployeeId === employee.id ? "selected" : ""}>${escapeHtml(employee.employeeCode)} · ${escapeHtml(employee.fullName)}</option>`)].join("");
+}
+
+async function refreshAnnualData({ force = false, quiet = false } = {}) {
+  if (!state.user || !state.annualYear) return;
+  const key = String(state.annualYear);
+  if (!force && state.annualDataKey === key && state.annualData) return;
+  state.annualLoading = true;
+  if (!quiet) setSyncStatus("syncing", "กำลังสรุปรายงานประจำปี");
+  if (state.currentView === "annual") renderAnnualReport();
+  const gregorianYear = annualGregorianYear();
+  const prefix = `${gregorianYear}-`;
+  try {
+    const months = Array.from({ length: 12 }, (_, index) => `${gregorianYear}-${String(index + 1).padStart(2, "0")}`);
+    const [evaluations, attendanceAll, leaveRecords, incentivesAll, closures] = await Promise.all([
+      window.EmployeeHubDatabase.loadPerformanceEvaluations(Number(state.annualYear)),
+      window.EmployeeHubDatabase.loadAttendanceMonthly(""),
+      window.EmployeeHubDatabase.loadLeaveRecords(gregorianYear),
+      window.EmployeeHubDatabase.loadServiceIncentives(""),
+      Promise.all(months.map((yearMonth) => window.EmployeeHubDatabase.loadMonthClosure(yearMonth))),
+    ]);
+    state.annualData = {
+      evaluations,
+      attendance: attendanceAll.filter((row) => String(row.yearMonth || "").startsWith(prefix)),
+      leaveRecords: leaveRecords.filter((row) => Number(row.year) === gregorianYear || String(row.yearMonth || "").startsWith(prefix)),
+      incentives: incentivesAll.filter((row) => String(row.yearMonth || "").startsWith(prefix)),
+      closures,
+      months,
+    };
+    state.annualDataKey = key;
+    setSyncStatus("online", "เชื่อมต่อแล้ว");
+  } catch (error) {
+    console.error(error);
+    setSyncStatus("error", "โหลดรายงานประจำปีไม่สำเร็จ");
+    if (!quiet) showToast(error.message || "โหลดรายงานประจำปีไม่สำเร็จ", "error", 6500);
+  } finally {
+    state.annualLoading = false;
+    if (state.currentView === "annual") renderAnnualReport();
+  }
+}
+
+function annualEvaluationResult(record) {
+  if (!record || record.disciplinePending === true || !Array.isArray(record.scores) || record.scores.length !== PERFORMANCE_KPIS.length) return null;
+  return calculatePerformanceSummary(record.scores);
+}
+
+function annualEligibleEmployees(data = state.annualData) {
+  if (!data) return [];
+  const gregorianYear = annualGregorianYear();
+  const yearEnd = `${gregorianYear}-12-31`;
+  const dataIds = new Set([
+    ...data.evaluations.map((row) => row.employeeId),
+    ...data.attendance.map((row) => row.employeeId),
+    ...data.leaveRecords.map((row) => row.employeeId),
+    ...data.incentives.map((row) => row.employeeId),
+  ]);
+  return [...state.employees]
+    .filter((employee) => (!employee.startDate || String(employee.startDate).slice(0, 10) <= yearEnd) && (employee.isActive || dataIds.has(employee.id)))
+    .sort((a, b) => (Number(a.sortOrder) || 999999) - (Number(b.sortOrder) || 999999) || a.fullName.localeCompare(b.fullName, "th"));
+}
+
+function annualEmployeeRows(data = state.annualData) {
+  if (!data) return [];
+  const legacyYear = Number(state.annualYear) === PERFORMANCE_LEGACY_ANNUAL_YEAR;
+  const rows = annualEligibleEmployees(data).map((employee) => {
+    const evaluations = data.evaluations.filter((row) => row.employeeId === employee.id).map((record) => ({ record, result: annualEvaluationResult(record) })).filter((row) => row.result);
+    const legacyPercentage = legacyYear && Number.isFinite(Number(PERFORMANCE_LEGACY_ANNUAL_SCORES[employee.id])) ? Number(PERFORMANCE_LEGACY_ANNUAL_SCORES[employee.id]) : null;
+    const averageGpa = evaluations.length ? evaluations.reduce((sum, row) => sum + row.result.gpa, 0) / evaluations.length : (legacyPercentage !== null ? legacyPercentage / 25 : null);
+    const averagePercentage = evaluations.length ? evaluations.reduce((sum, row) => sum + row.result.percentage, 0) / evaluations.length : legacyPercentage;
+    const incentives = data.incentives.filter((row) => row.employeeId === employee.id);
+    const attendance = data.attendance.filter((row) => row.employeeId === employee.id);
+    const leaves = data.leaveRecords.filter((row) => row.employeeId === employee.id);
+    const leaveByType = { sick: 0, personal: 0, vacation: 0, other: 0 };
+    leaves.forEach((row) => {
+      const key = ["sick", "personal", "vacation"].includes(row.leaveType) ? row.leaveType : "other";
+      leaveByType[key] += Number(row.days) || 0;
+    });
+    return {
+      employee,
+      averageGpa,
+      averagePercentage,
+      evaluatedMonths: evaluations.length,
+      legacyAnnual: legacyPercentage !== null && evaluations.length === 0,
+      salesAmount: incentives.reduce((sum, row) => sum + Number(row.salesAmount || 0), 0),
+      evaluationAmount: incentives.reduce((sum, row) => sum + Number(row.evaluationAmount || 0), 0),
+      timeAmount: incentives.reduce((sum, row) => sum + Number(row.timeAmount || 0), 0),
+      totalAmount: incentives.reduce((sum, row) => sum + Number(row.totalAmount || 0), 0),
+      serviceMonths: new Set(incentives.map((row) => row.yearMonth)).size,
+      lateMinutes: attendance.reduce((sum, row) => sum + Number(row.lateMinutes || 0), 0),
+      attendanceMonths: new Set(attendance.map((row) => row.yearMonth)).size,
+      leaveDays: leaves.reduce((sum, row) => sum + Number(row.days || 0), 0),
+      leaveByType,
+      rank: null,
+    };
+  });
+  const ranked = rows.filter((row) => Number.isFinite(row.averageGpa)).sort((a, b) => b.averageGpa - a.averageGpa || a.employee.fullName.localeCompare(b.employee.fullName, "th"));
+  let rank = 0;
+  let previous = null;
+  ranked.forEach((row, index) => {
+    const rounded = roundedPerformanceGpa(row.averageGpa);
+    if (previous === null || rounded !== previous) rank = index + 1;
+    row.rank = rank;
+    previous = rounded;
+  });
+  return rows.sort((a, b) => (a.rank ?? 999999) - (b.rank ?? 999999) || (Number(a.employee.sortOrder) || 999999) - (Number(b.employee.sortOrder) || 999999));
+}
+
+function annualMonthlyRows(data = state.annualData) {
+  if (!data) return [];
+  return data.months.map((yearMonth, monthIndex) => {
+    const performanceRows = data.evaluations.filter((record) => Number(record.month) === monthIndex).map(annualEvaluationResult).filter(Boolean);
+    const incentives = data.incentives.filter((row) => row.yearMonth === yearMonth);
+    const attendance = data.attendance.filter((row) => row.yearMonth === yearMonth);
+    const leaves = data.leaveRecords.filter((row) => row.yearMonth === yearMonth);
+    const closure = data.closures.find((row) => row.yearMonth === yearMonth) || { status: "OPEN" };
+    return {
+      yearMonth,
+      label: PERFORMANCE_SHORT_MONTHS[monthIndex],
+      averageGpa: performanceRows.length ? performanceRows.reduce((sum, row) => sum + row.gpa, 0) / performanceRows.length : null,
+      evaluatedCount: performanceRows.length,
+      incentiveAmount: incentives.reduce((sum, row) => sum + Number(row.totalAmount || 0), 0),
+      incentiveCount: incentives.length,
+      lateMinutes: attendance.reduce((sum, row) => sum + Number(row.lateMinutes || 0), 0),
+      leaveDays: leaves.reduce((sum, row) => sum + Number(row.days || 0), 0),
+      closureStatus: String(closure.status || "OPEN"),
+    };
+  });
+}
+
+function annualReportSummary() {
+  const data = state.annualData;
+  if (!data) return null;
+  const employeeRows = annualEmployeeRows(data);
+  const monthlyRows = annualMonthlyRows(data);
+  const scoredRows = employeeRows.filter((row) => Number.isFinite(row.averageGpa));
+  return {
+    employeeRows,
+    monthlyRows,
+    averageGpa: scoredRows.length ? scoredRows.reduce((sum, row) => sum + row.averageGpa, 0) / scoredRows.length : null,
+    scoredEmployees: scoredRows.length,
+    totalEmployees: employeeRows.length,
+    totalIncentive: employeeRows.reduce((sum, row) => sum + row.totalAmount, 0),
+    totalLateMinutes: employeeRows.reduce((sum, row) => sum + row.lateMinutes, 0),
+    totalLeaveDays: employeeRows.reduce((sum, row) => sum + row.leaveDays, 0),
+    finalizedMonths: monthlyRows.filter((row) => row.closureStatus === "FINALIZED").length,
+    top: scoredRows.sort((a, b) => b.averageGpa - a.averageGpa)[0] || null,
+  };
+}
+
+function annualClosureBadge(status) {
+  if (status === "FINALIZED") return '<span class="badge badge-ready">รับรองแล้ว</span>';
+  if (status === "REOPENED") return '<span class="badge badge-danger">เปิดแก้ไข</span>';
+  return '<span class="badge badge-progress">ยังไม่รับรอง</span>';
+}
+
+function annualSelectedEmployeePanel(summary) {
+  if (!summary || state.annualEmployeeId === "all") return "";
+  const row = summary.employeeRows.find((item) => item.employee.id === state.annualEmployeeId);
+  if (!row) return `<article class="panel"><div class="empty-state"><i data-lucide="user-x"></i><p>ไม่พบข้อมูลพนักงานที่เลือกในปีนี้</p></div></article>`;
+  const monthly = state.annualData.months.map((yearMonth, monthIndex) => {
+    const evaluation = state.annualData.evaluations.find((item) => item.employeeId === row.employee.id && Number(item.month) === monthIndex);
+    const result = annualEvaluationResult(evaluation);
+    const incentive = state.annualData.incentives.filter((item) => item.employeeId === row.employee.id && item.yearMonth === yearMonth).reduce((sum, item) => sum + Number(item.totalAmount || 0), 0);
+    const late = state.annualData.attendance.filter((item) => item.employeeId === row.employee.id && item.yearMonth === yearMonth).reduce((sum, item) => sum + Number(item.lateMinutes || 0), 0);
+    const leave = state.annualData.leaveRecords.filter((item) => item.employeeId === row.employee.id && item.yearMonth === yearMonth).reduce((sum, item) => sum + Number(item.days || 0), 0);
+    return { label: PERFORMANCE_SHORT_MONTHS[monthIndex], gpa: result?.gpa ?? null, incentive, late, leave };
+  });
+  return `<article class="panel annual-employee-detail">
+    <div class="panel-head"><div><h2>${escapeHtml(row.employee.fullName)}</h2><p>${escapeHtml(row.employee.employeeCode)} · รายละเอียดปี ${state.annualYear}</p></div><span class="badge ${Number.isFinite(row.averageGpa) ? "badge-ready" : "badge-progress"}">${row.rank ? `อันดับ ${row.rank}` : "ยังไม่มีคะแนน"}</span></div>
+    <div class="annual-detail-kpis"><div><span>GPA เฉลี่ย</span><strong>${Number.isFinite(row.averageGpa) ? formatNumber(row.averageGpa, 2) : "-"}</strong></div><div><span>Incentive รวม</span><strong class="${row.totalAmount < 0 ? "negative" : ""}">${formatMoney(row.totalAmount)}</strong></div><div><span>สายรวม</span><strong>${formatNumber(row.lateMinutes, 0)} นาที</strong></div><div><span>วันลารวม</span><strong>${formatNumber(row.leaveDays, 1)} วัน</strong></div></div>
+    ${row.legacyAnnual ? `<div class="notice notice-info"><i data-lucide="archive"></i><div>คะแนน Performance ปี 2568 มาจากผลสรุปรายปีในไฟล์ต้นฉบับ จึงไม่มี GPA แยกรายเดือน</div></div>` : ""}
+    <div class="table-wrap"><table><thead><tr><th>เดือน</th><th class="money">GPA</th><th class="money">Incentive</th><th class="money">สาย (นาที)</th><th class="money">ลา (วัน)</th></tr></thead><tbody>${monthly.map((item) => `<tr><td>${item.label}</td><td class="money">${Number.isFinite(item.gpa) ? formatNumber(item.gpa, 2) : "-"}</td><td class="money ${item.incentive < 0 ? "negative" : ""}">${formatMoney(item.incentive)}</td><td class="money">${formatNumber(item.late, 0)}</td><td class="money">${formatNumber(item.leave, 1)}</td></tr>`).join("")}</tbody></table></div>
+  </article>`;
+}
+
+function renderAnnualReport() {
+  const summary = annualReportSummary();
+  const firstLoading = state.annualLoading && !summary;
+  if (firstLoading) {
+    els.annualView.innerHTML = '<div class="loading-skeleton"></div>';
+    return;
+  }
+  const filteredRows = summary ? summary.employeeRows.filter((row) => state.annualEmployeeId === "all" || row.employee.id === state.annualEmployeeId) : [];
+  const legacy = Number(state.annualYear) === PERFORMANCE_LEGACY_ANNUAL_YEAR;
+  els.annualView.innerHTML = `
+    <div class="page-grid annual-report-page">
+      <article class="panel annual-hero">
+        <div class="panel-head"><div><p class="eyebrow">ANNUAL PEOPLE REPORT</p><h2>รายงานประจำปี</h2><p>สรุป Performance, Service Incentive, เวลาสาย วันลา และสถานะรับรองรอบตลอดทั้งปี</p></div><span class="badge badge-ready">Phase 8</span></div>
+        <div class="annual-toolbar annual-no-print"><div class="field compact-field"><label for="annualYearPicker">ปีรายงาน</label><select id="annualYearPicker">${annualYearOptions()}</select></div><div class="field compact-field annual-employee-filter"><label for="annualEmployeePicker">พนักงาน</label><select id="annualEmployeePicker">${annualEmployeeOptions()}</select></div><div class="panel-actions"><button id="refreshAnnualButton" class="button button-secondary" type="button"><i data-lucide="refresh-cw"></i>ตรวจใหม่</button><button id="exportAnnualButton" class="button button-primary" type="button" ${summary ? "" : "disabled"}><i data-lucide="file-down"></i>Export CSV</button><button id="printAnnualButton" class="button button-ghost" type="button" ${summary ? "" : "disabled"}><i data-lucide="printer"></i>พิมพ์</button></div></div>
+        ${legacy ? `<div class="notice notice-info"><i data-lucide="archive"></i><div><strong>ข้อมูล Performance ปี 2568</strong><br>ใช้คะแนนเฉลี่ยรายปีจากไฟล์ต้นฉบับ ส่วนข้อมูล Incentive, เวลา และวันลาแสดงตามรายการที่มีอยู่ใน Firebase</div></div>` : ""}
+      </article>
+      ${summary ? `<div class="kpi-grid annual-kpi-grid">
+        <article class="kpi-card"><div class="kpi-head"><span>GPA เฉลี่ยทั้งปี</span><span class="kpi-icon"><i data-lucide="gauge"></i></span></div><div class="kpi-value">${Number.isFinite(summary.averageGpa) ? formatNumber(summary.averageGpa, 2) : "-"}</div><div class="kpi-note">มีผลประเมิน ${summary.scoredEmployees}/${summary.totalEmployees} คน</div></article>
+        <article class="kpi-card"><div class="kpi-head"><span>Service Incentive รวม</span><span class="kpi-icon"><i data-lucide="badge-dollar-sign"></i></span></div><div class="kpi-value ${summary.totalIncentive < 0 ? "negative" : ""}">${formatMoney(summary.totalIncentive)}</div><div class="kpi-note">รวมทุกองค์ประกอบตลอดปี</div></article>
+        <article class="kpi-card"><div class="kpi-head"><span>เวลาสายรวม</span><span class="kpi-icon"><i data-lucide="clock-alert"></i></span></div><div class="kpi-value">${formatNumber(summary.totalLateMinutes, 0)}</div><div class="kpi-note">นาทีตลอดทั้งปี</div></article>
+        <article class="kpi-card"><div class="kpi-head"><span>วันลารวม</span><span class="kpi-icon"><i data-lucide="calendar-minus-2"></i></span></div><div class="kpi-value">${formatNumber(summary.totalLeaveDays, 1)}</div><div class="kpi-note">วันตลอดทั้งปี</div></article>
+        <article class="kpi-card"><div class="kpi-head"><span>รับรองรอบแล้ว</span><span class="kpi-icon"><i data-lucide="calendar-check-2"></i></span></div><div class="kpi-value">${summary.finalizedMonths}/12</div><div class="kpi-note">เดือนที่สถานะ FINALIZED</div></article>
+      </div>
+      <div class="split-grid annual-overview-grid">
+        <article class="panel"><div class="panel-head"><div><h2>แนวโน้มรายเดือน</h2><p>ข้อมูลหลักของปี ${state.annualYear}</p></div></div><div class="table-wrap"><table><thead><tr><th>เดือน</th><th class="money">GPA เฉลี่ย</th><th class="money">Incentive</th><th class="money">สาย</th><th class="money">ลา</th><th>สถานะรอบ</th></tr></thead><tbody>${summary.monthlyRows.map((row) => `<tr><td>${row.label}</td><td class="money">${Number.isFinite(row.averageGpa) ? formatNumber(row.averageGpa, 2) : "-"}</td><td class="money ${row.incentiveAmount < 0 ? "negative" : ""}">${formatMoney(row.incentiveAmount)}</td><td class="money">${formatNumber(row.lateMinutes, 0)} นาที</td><td class="money">${formatNumber(row.leaveDays, 1)} วัน</td><td>${annualClosureBadge(row.closureStatus)}</td></tr>`).join("")}</tbody></table></div></article>
+        <article class="panel"><div class="panel-head"><div><h2>อันดับประจำปี</h2><p>คำนวณจาก GPA เฉลี่ยของเดือนที่ประเมินครบ</p></div></div>${summary.employeeRows.some((row) => row.rank) ? `<div class="ranking-list">${summary.employeeRows.filter((row) => row.rank).slice(0, 8).map((row) => `<button class="ranking-row annual-open-employee" data-employee-id="${escapeHtml(row.employee.id)}" type="button"><span class="rank-number">${row.rank}</span><span class="ranking-name"><strong>${escapeHtml(row.employee.fullName)}</strong><small>${escapeHtml(row.employee.employeeCode)} · ${row.legacyAnnual ? "คะแนนสรุปรายปี" : `${row.evaluatedMonths} เดือน`}</small></span><span class="ranking-score"><strong>GPA ${formatNumber(row.averageGpa, 2)}</strong><small>${formatNumber(row.averagePercentage, 1)} คะแนน</small></span></button>`).join("")}</div>` : `<div class="empty-state"><i data-lucide="clipboard-x"></i><p>ยังไม่มีผลประเมินสำหรับจัดอันดับ</p></div>`}</article>
+      </div>
+      ${annualSelectedEmployeePanel(summary)}
+      <article class="panel annual-summary-table"><div class="panel-head"><div><h2>สรุปรายบุคคล</h2><p>${state.annualEmployeeId === "all" ? `พนักงาน ${filteredRows.length} คน` : "แสดงเฉพาะพนักงานที่เลือก"}</p></div></div><div class="table-wrap"><table><thead><tr><th>อันดับ</th><th>พนักงาน</th><th class="money">GPA</th><th class="money">เดือนประเมิน</th><th class="money">Incentive รวม</th><th class="money">สาย (นาที)</th><th class="money">ลา (วัน)</th><th class="money">เดือน Incentive</th></tr></thead><tbody>${filteredRows.map((row) => `<tr><td>${row.rank || "-"}</td><td><strong>${escapeHtml(row.employee.fullName)}</strong><br><small>${escapeHtml(row.employee.employeeCode)}${row.legacyAnnual ? " · ข้อมูลสรุปรายปี" : ""}</small></td><td class="money">${Number.isFinite(row.averageGpa) ? formatNumber(row.averageGpa, 2) : "-"}</td><td class="money">${row.evaluatedMonths || (row.legacyAnnual ? "รายปี" : 0)}</td><td class="money ${row.totalAmount < 0 ? "negative" : ""}">${formatMoney(row.totalAmount)}</td><td class="money">${formatNumber(row.lateMinutes, 0)}</td><td class="money">${formatNumber(row.leaveDays, 1)}</td><td class="money">${row.serviceMonths}</td></tr>`).join("") || `<tr><td colspan="8"><div class="empty-state"><p>ไม่พบข้อมูลในปีที่เลือก</p></div></td></tr>`}</tbody></table></div></article>` : `<article class="panel"><div class="empty-state"><i data-lucide="calendar-search"></i><p>กด “ตรวจใหม่” เพื่อโหลดรายงานประจำปี</p></div></article>`}
+    </div>`;
+
+  document.getElementById("annualYearPicker")?.addEventListener("change", (event) => {
+    state.annualYear = Number(event.target.value);
+    state.annualData = null;
+    state.annualDataKey = "";
+    void refreshAnnualData({ force: true });
+  });
+  document.getElementById("annualEmployeePicker")?.addEventListener("change", (event) => {
+    state.annualEmployeeId = event.target.value || "all";
+    renderAnnualReport();
+  });
+  document.getElementById("refreshAnnualButton")?.addEventListener("click", () => refreshAnnualData({ force: true }));
+  document.getElementById("exportAnnualButton")?.addEventListener("click", exportAnnualReportCsv);
+  document.getElementById("printAnnualButton")?.addEventListener("click", () => window.print());
+  els.annualView.querySelectorAll(".annual-open-employee").forEach((button) => button.addEventListener("click", () => {
+    state.annualEmployeeId = button.dataset.employeeId || "all";
+    renderAnnualReport();
+    document.querySelector(".annual-employee-detail")?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }));
+  ensureIcons();
+}
+
+function exportAnnualReportCsv() {
+  const summary = annualReportSummary();
+  if (!summary) return showToast("ยังไม่มีข้อมูลสำหรับ Export", "warning");
+  const rows = [["ปี", "อันดับ", "รหัสพนักงาน", "ชื่อพนักงาน", "GPA เฉลี่ย", "คะแนนเฉลี่ย", "เดือนประเมิน", "ขายของ", "ประเมิน", "เวลา", "Incentive รวม", "นาทีสาย", "วันลารวม", "ลาป่วย", "ลากิจ", "พักร้อน", "ลาอื่นๆ", "เดือนที่มี Incentive", "แหล่ง Performance"]];
+  summary.employeeRows.filter((row) => state.annualEmployeeId === "all" || row.employee.id === state.annualEmployeeId).forEach((row) => rows.push([
+    state.annualYear, row.rank || "", row.employee.employeeCode, row.employee.fullName,
+    Number.isFinite(row.averageGpa) ? roundedPerformanceGpa(row.averageGpa) : "",
+    Number.isFinite(row.averagePercentage) ? Math.round(row.averagePercentage * 100) / 100 : "",
+    row.evaluatedMonths || (row.legacyAnnual ? "รายปี" : 0), row.salesAmount, row.evaluationAmount, row.timeAmount, row.totalAmount,
+    row.lateMinutes, row.leaveDays, row.leaveByType.sick, row.leaveByType.personal, row.leaveByType.vacation, row.leaveByType.other,
+    row.serviceMonths, row.legacyAnnual ? PERFORMANCE_LEGACY_ANNUAL_SOURCE : "Performance Summary / Firebase",
+  ]));
+  downloadCsv(rows, `annual-employee-report-${state.annualYear}${state.annualEmployeeId === "all" ? "" : `-${state.annualEmployeeId}`}.csv`);
 }
 
 function renderEmployees() {
@@ -3602,6 +3875,7 @@ function bindGlobalEvents() {
   });
   els.refreshButton.addEventListener("click", () => {
     if (state.currentView === "executive") refreshExecutiveData({ force: true });
+    else if (state.currentView === "annual") refreshAnnualData({ force: true });
     else if (state.currentView === "performance") {
       refreshPerformanceData({ force: true });
       if (state.performanceTab === "employee360") refreshEmployee360Data({ quiet: true });

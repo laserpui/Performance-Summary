@@ -631,3 +631,58 @@ tr:last-child td { border-bottom: 0; }
   .executive-bars { grid-template-columns:repeat(6,minmax(54px,1fr)); }
   .executive-alert { grid-template-columns:38px 1fr 18px; }
 }
+
+
+/* Phase 8 · Annual Reports */
+.annual-hero {
+  background: linear-gradient(135deg, rgba(229, 255, 255, .92), rgba(255, 255, 230, .9), rgba(255, 230, 255, .84));
+}
+.annual-toolbar {
+  display: grid;
+  grid-template-columns: minmax(140px, 190px) minmax(220px, 1fr) auto;
+  gap: 14px;
+  align-items: end;
+}
+.annual-toolbar .panel-actions { justify-content: flex-end; }
+.annual-kpi-grid { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.annual-overview-grid { grid-template-columns: minmax(0, 1.45fr) minmax(320px, .75fr); }
+.annual-summary-table table { min-width: 1040px; }
+.annual-employee-detail { scroll-margin-top: 20px; }
+.annual-detail-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.annual-detail-kpis > div {
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: rgba(255,255,255,.68);
+}
+.annual-detail-kpis span { display: block; color: var(--muted); font-size: .82rem; margin-bottom: 5px; }
+.annual-detail-kpis strong { font-size: 1.25rem; }
+.annual-report-page .ranking-row { width: 100%; }
+@media (max-width: 1180px) {
+  .annual-kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .annual-overview-grid { grid-template-columns: 1fr; }
+}
+@media (max-width: 760px) {
+  .annual-toolbar { grid-template-columns: 1fr; }
+  .annual-toolbar .panel-actions { justify-content: stretch; }
+  .annual-toolbar .panel-actions .button { flex: 1; }
+  .annual-kpi-grid, .annual-detail-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 480px) {
+  .annual-kpi-grid, .annual-detail-kpis { grid-template-columns: 1fr; }
+}
+@media print {
+  body * { visibility: hidden !important; }
+  #annualView, #annualView * { visibility: visible !important; }
+  #annualView { position: absolute; inset: 0; width: 100%; padding: 0; }
+  .annual-no-print, .sidebar, .topbar, .mobile-nav, .ambient { display: none !important; }
+  .annual-report-page { display: block; }
+  .annual-report-page .panel, .annual-report-page .kpi-card { break-inside: avoid; box-shadow: none; background: #fff; }
+  .annual-report-page .table-wrap { overflow: visible; }
+  .annual-report-page table { min-width: 0; font-size: 10px; }
+}
