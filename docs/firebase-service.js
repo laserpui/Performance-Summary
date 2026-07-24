@@ -18,6 +18,56 @@
   let firestoreApi = null;
   let readyError = null;
 
+  // Production v1.0.3: prevent duplicate submissions and skip writes when business data is unchanged.
+  const pendingWriteOperations = new Map();
+  let quotaCooldownUntil = 0;
+
+  function isQuotaError(error) {
+    const code = String(error?.code || error?.cause?.code || "").toLowerCase();
+    const message = String(error?.message || error?.cause?.message || "").toLowerCase();
+    return code.includes("resource-exhausted") || code.includes("quota") || message.includes("quota exceeded");
+  }
+
+  function comparableValue(value) {
+    if (value === undefined) return null;
+    if (value === null || typeof value !== "object") return value;
+    if (typeof value.toMillis === "function") return value.toMillis();
+    if (Array.isArray(value)) return value.map(comparableValue);
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, comparableValue(value[key])]));
+  }
+
+  function sameValue(left, right) {
+    return JSON.stringify(comparableValue(left)) === JSON.stringify(comparableValue(right));
+  }
+
+  function sameFields(existing, desired, fields) {
+    return Boolean(existing) && fields.every((field) => sameValue(existing[field], desired[field]));
+  }
+
+  function attachWriteMeta(record, status, estimatedWrites = 0) {
+    if (!record || typeof record !== "object") return record;
+    return { ...record, _writeStatus: status, _estimatedWrites: estimatedWrites };
+  }
+
+  async function runWriteOnce(key, operation) {
+    if (Date.now() < quotaCooldownUntil) {
+      const blocked = new Error("โควตา Firestore ของโครงการเต็มชั่วคราว ระบบพักการส่งคำสั่งเขียนเพื่อป้องกันการกดซ้ำ กรุณารอให้โควตากลับมาใช้งานได้หรือเปิด Billing");
+      blocked.code = "resource-exhausted";
+      throw friendlyError(blocked);
+    }
+    const normalizedKey = String(key || "write");
+    if (pendingWriteOperations.has(normalizedKey)) return pendingWriteOperations.get(normalizedKey);
+    const pending = Promise.resolve()
+      .then(operation)
+      .catch((error) => {
+        if (isQuotaError(error)) quotaCooldownUntil = Date.now() + 60_000;
+        throw error;
+      })
+      .finally(() => pendingWriteOperations.delete(normalizedKey));
+    pendingWriteOperations.set(normalizedKey, pending);
+    return pending;
+  }
+
   function isConfigured() {
     return ["apiKey", "authDomain", "projectId", "appId"].every((key) => {
       const value = String(CONFIG[key] || "");
@@ -26,7 +76,7 @@
   }
 
   function friendlyError(error, fallback = "Firebase request failed") {
-    const code = String(error?.code || "");
+    const code = String(error?.code || error?.cause?.code || "");
     const messages = {
       "auth/invalid-credential": "อีเมลหรือรหัสผ่านไม่ถูกต้อง",
       "auth/invalid-email": "รูปแบบอีเมลไม่ถูกต้อง",
@@ -35,15 +85,19 @@
       "auth/network-request-failed": "ไม่สามารถเชื่อมต่อ Firebase Authentication ได้",
       "permission-denied": "ไม่มีสิทธิ์ดำเนินการกับข้อมูลนี้ อาจเกิดจากรอบเดือนถูกล็อกหรือ Firestore Rules ไม่อนุญาต",
       "MONTH_FINALIZED": "รอบเดือนนี้ได้รับการรับรองและล็อกแล้ว กรุณาเปิดรอบกลับมาแก้ไขก่อน",
+      "resource-exhausted": "โควตา Firestore ของโครงการเต็มชั่วคราว ข้อมูลรายการนี้ยังไม่ถูกบันทึก กรุณารอให้โควตากลับมาใช้งานได้หรือเปิด Billing",
+      "quota-exceeded": "โควตา Firestore ของโครงการเต็มชั่วคราว ข้อมูลรายการนี้ยังไม่ถูกบันทึก กรุณารอให้โควตากลับมาใช้งานได้หรือเปิด Billing",
       "unavailable": "Firestore ไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่",
       "failed-precondition": "Firestore ยังตั้งค่าไม่ครบ หรือ Query ต้องใช้ Index เพิ่มเติม",
       "already-exists": "มีข้อมูลนี้อยู่แล้ว",
       "not-found": "ไม่พบข้อมูลที่ต้องการ",
     };
-    const baseMessage = messages[code] || error?.message || fallback;
-    const failedPath = String(error?.failedOperationPath || "");
-    const wrapped = new Error(failedPath ? `${baseMessage} [${failedPath}]` : baseMessage);
-    wrapped.code = code || error?.code;
+    const rawMessage = String(error?.message || error?.cause?.message || fallback);
+    const baseMessage = isQuotaError(error) ? messages["resource-exhausted"] : (messages[code] || rawMessage || fallback);
+    const failedPath = String(error?.failedOperationPath || error?.cause?.failedOperationPath || "");
+    const message = failedPath && !baseMessage.includes(failedPath) ? `${baseMessage} [${failedPath}]` : baseMessage;
+    const wrapped = new Error(message);
+    wrapped.code = isQuotaError(error) ? "resource-exhausted" : (code || error?.code);
     wrapped.cause = error;
     wrapped.failedOperationPath = failedPath;
     return wrapped;
@@ -791,6 +845,7 @@
     const employeeRef = firestoreApi.doc(db, "employees", employeeId);
     let beforeForAudit = null;
     let afterForAudit = null;
+    let unchanged = false;
 
     try {
       await firestoreApi.runTransaction(db, async (transaction) => {
@@ -806,10 +861,18 @@
           conflict.code = "VERSION_CONFLICT";
           throw conflict;
         }
-        const payload = {
+        const businessData = {
           employeeId, yearMonth, year, month, date, status,
           countsAsWork: monthlyStatusCountsAsWork(status),
           note, scores, legacyException,
+        };
+        if (sameFields(existing, businessData, Object.keys(businessData))) {
+          unchanged = true;
+          beforeForAudit = existing;
+          return;
+        }
+        const payload = {
+          ...businessData,
           source: String(existing?.source || "Employee Hub / Firebase"),
           ...(existing?.sourceRecordId ? { sourceRecordId: existing.sourceRecordId } : {}),
           ...(Array.isArray(existing?.sourceScoreRecordIds) ? { sourceScoreRecordIds: existing.sourceScoreRecordIds } : {}),
@@ -826,13 +889,16 @@
         transaction.set(ref, payload);
       });
 
-      await writeMonthlyAuditLog({
-        action: beforeForAudit ? "UPDATE_DAILY_PERFORMANCE" : "CREATE_DAILY_PERFORMANCE",
-        targetId: id,
-        before: beforeForAudit,
-        after: afterForAudit,
-      });
-      return monthlyEntryFromSnapshot(await firestoreApi.getDoc(ref));
+      if (!unchanged && input.skipAudit !== true) {
+        await writeMonthlyAuditLog({
+          action: beforeForAudit ? "UPDATE_DAILY_PERFORMANCE" : "CREATE_DAILY_PERFORMANCE",
+          targetId: id,
+          before: beforeForAudit,
+          after: afterForAudit,
+        });
+      }
+      const saved = monthlyEntryFromSnapshot(await firestoreApi.getDoc(ref));
+      return attachWriteMeta(saved, unchanged ? "unchanged" : "written", unchanged ? 0 : (input.skipAudit === true ? 1 : 2));
     } catch (error) {
       if (error?.code === "VERSION_CONFLICT" || error?.message === "VERSION_CONFLICT") throw error;
       if (!error.failedOperationPath) error.failedOperationPath = ref.path;
@@ -856,11 +922,12 @@
         firestoreApi.query(firestoreApi.collection(db, "dailyPerformanceEntries"), firestoreApi.where("date", "==", date))
       );
       const existing = new Map(existingSnapshots.docs.map((snapshot) => [snapshot.id, snapshot.data()]));
-      let completed = 0;
+      const changedIds = [];
+      let unchangedCount = 0;
       for (const employeeId of employeeIds) {
         const id = monthlyEntryDocumentId(employeeId, date);
         const before = existing.get(id) || null;
-        await saveDailyPerformanceEntry({
+        const saved = await saveDailyPerformanceEntry({
           id,
           employeeId,
           date,
@@ -869,10 +936,20 @@
           scores,
           expectedVersion: Number(before?.version) || 0,
           legacyException: before?.legacyException === true,
+          skipAudit: true,
         });
-        completed += 1;
+        if (saved?._writeStatus === "unchanged") unchangedCount += 1;
+        else changedIds.push(employeeId);
       }
-      return { count: completed, date };
+      if (changedIds.length) {
+        await writeMonthlyAuditLog({
+          action: "BATCH_DAILY_PERFORMANCE",
+          targetId: date,
+          before: null,
+          after: { date, status, changedCount: changedIds.length, unchangedCount, employeeIds: changedIds },
+        });
+      }
+      return { count: changedIds.length, unchangedCount, total: employeeIds.length, date, estimatedWrites: changedIds.length + (changedIds.length ? 1 : 0) };
     } catch (error) {
       throw friendlyError(error, "บันทึกคะแนนพนักงานทุกคนไม่สำเร็จ");
     }
@@ -907,6 +984,7 @@
     const ref = firestoreApi.doc(db, "monthlyPerformanceOverrides", id);
     const employeeRef = firestoreApi.doc(db, "employees", employeeId);
     const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+    let unchanged = false;
     try {
       await firestoreApi.runTransaction(db, async (transaction) => {
         await ensureMonthlyMonthEditable(transaction, yearMonth);
@@ -915,8 +993,10 @@
         const existing = existingSnapshot.exists() ? existingSnapshot.data() : null;
         const currentVersion = Number(existing?.version) || 0;
         if (currentVersion !== expectedVersion) { const conflict = new Error("VERSION_CONFLICT"); conflict.code = "VERSION_CONFLICT"; throw conflict; }
+        const businessData = { employeeId, yearMonth, year, month, actualWorkDaysOverride };
+        if (sameFields(existing, businessData, Object.keys(businessData))) { unchanged = true; return; }
         const payload = {
-          employeeId, yearMonth, year, month, actualWorkDaysOverride,
+          ...businessData,
           source: String(existing?.source || "Employee Hub / Firebase"),
           ...(existing?.sourceUpdatedAt ? { sourceUpdatedAt: existing.sourceUpdatedAt } : {}),
           ...(existing?.sourceUpdatedBy ? { sourceUpdatedBy: existing.sourceUpdatedBy } : {}),
@@ -930,7 +1010,8 @@
         transaction.set(ref, payload);
         transaction.set(auditRef, { actorId: uid, action: existing ? "UPDATE_MONTHLY_OVERRIDE" : "CREATE_MONTHLY_OVERRIDE", targetType: "monthlyPerformanceOverride", targetId: id, before: existing || null, after: { ...payload, createdAt: null, updatedAt: null }, createdAt: firestoreApi.serverTimestamp() });
       });
-      return monthlyOverrideFromSnapshot(await firestoreApi.getDoc(ref));
+      const saved = monthlyOverrideFromSnapshot(await firestoreApi.getDoc(ref));
+      return attachWriteMeta(saved, unchanged ? "unchanged" : "written", unchanged ? 0 : 2);
     } catch (error) {
       if (error?.code === "VERSION_CONFLICT" || error?.message === "VERSION_CONFLICT") throw error;
       throw friendlyError(error, "บันทึกวันทำงานจริงไม่สำเร็จ");
@@ -967,24 +1048,32 @@
     if (status === "CLOSED" && (!validation || validation.passed !== true || Number(validation.counts?.error) !== 0)) {
       throw new Error("เดือนยังมีข้อผิดพลาด ไม่สามารถปิดเดือนได้");
     }
+    const normalizedValidation = validation ? {
+      passed: validation.passed === true,
+      counts: {
+        error: Math.max(0, Math.trunc(Number(validation.counts?.error) || 0)),
+        warning: Math.max(0, Math.trunc(Number(validation.counts?.warning) || 0)),
+        info: Math.max(0, Math.trunc(Number(validation.counts?.info) || 0)),
+      },
+      checkedAt: String(validation.checkedAt || new Date().toISOString()),
+    } : null;
     const ref = firestoreApi.doc(db, "monthlyPerformanceStatus", yearMonth);
     const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+    let unchanged = false;
     try {
       await firestoreApi.runTransaction(db, async (transaction) => {
         const snapshot = await transaction.get(ref);
         await ensureMonthClosureEditable(transaction, yearMonth);
         const existing = snapshot.exists() ? snapshot.data() : null;
+        const existingValidation = existing?.validation ? { passed: existing.validation.passed === true, counts: existing.validation.counts || {} } : null;
+        const desiredValidation = normalizedValidation ? { passed: normalizedValidation.passed, counts: normalizedValidation.counts } : null;
+        if (existing && String(existing.status || "") === status && String(existing.reason || "") === reason && sameValue(existingValidation, desiredValidation)) {
+          unchanged = true;
+          return;
+        }
         const payload = {
           yearMonth, year, month, status, reason,
-          validation: validation ? {
-            passed: validation.passed === true,
-            counts: {
-              error: Math.max(0, Math.trunc(Number(validation.counts?.error) || 0)),
-              warning: Math.max(0, Math.trunc(Number(validation.counts?.warning) || 0)),
-              info: Math.max(0, Math.trunc(Number(validation.counts?.info) || 0)),
-            },
-            checkedAt: String(validation.checkedAt || new Date().toISOString()),
-          } : null,
+          validation: normalizedValidation,
           version: (Number(existing?.version) || 0) + 1,
           createdAt: existing?.createdAt || firestoreApi.serverTimestamp(),
           createdBy: existing?.createdBy || uid,
@@ -995,7 +1084,8 @@
         transaction.set(ref, payload);
         transaction.set(auditRef, { actorId: uid, action: "MONTHLY_PERFORMANCE_STATUS", targetType: "monthlyPerformanceStatus", targetId: yearMonth, before: existing || null, after: { yearMonth, status, reason, validation: payload.validation, version: payload.version }, createdAt: firestoreApi.serverTimestamp() });
       });
-      return monthlyStatusFromSnapshot(await firestoreApi.getDoc(ref), yearMonth);
+      const saved = monthlyStatusFromSnapshot(await firestoreApi.getDoc(ref), yearMonth);
+      return attachWriteMeta(saved, unchanged ? "unchanged" : "written", unchanged ? 0 : 2);
     } catch (error) {
       throw friendlyError(error, "เปลี่ยนสถานะเดือนไม่สำเร็จ");
     }
@@ -1175,6 +1265,7 @@
     const ref = firestoreApi.doc(db, "evaluations", id);
     const employeeRef = firestoreApi.doc(db, "employees", employeeId);
     let before = null;
+    let unchanged = false;
     try {
       await firestoreApi.runTransaction(db, async (transaction) => {
         const [employeeSnapshot, existingSnapshot] = await Promise.all([
@@ -1190,21 +1281,24 @@
           conflict.code = "VERSION_CONFLICT";
           throw conflict;
         }
-        before = existing ? { ...existing, createdAt: null, updatedAt: null } : null;
         const metadata = normalizePerformanceMetadata(input, existing);
-        transaction.set(ref, {
-          employeeId,
-          yearMonth,
-          year,
-          month,
-          scores,
-          note,
-          source: String(input.source || "Employee Management Hub · Performance Summary").slice(0, 160),
+        const source = String(input.source || "Employee Management Hub · Performance Summary").slice(0, 160);
+        const businessData = {
+          employeeId, yearMonth, year, month, scores, note, source,
           sourceSync: metadata.sourceSync,
           scoreSources: metadata.scoreSources,
           syncStatus: metadata.syncStatus,
           disciplinePending: metadata.disciplinePending,
           manualOverrides: metadata.manualOverrides,
+        };
+        if (sameFields(existing, businessData, Object.keys(businessData))) {
+          unchanged = true;
+          before = existing ? { ...existing, createdAt: null, updatedAt: null } : null;
+          return;
+        }
+        before = existing ? { ...existing, createdAt: null, updatedAt: null } : null;
+        transaction.set(ref, {
+          ...businessData,
           version: currentVersion + 1,
           createdAt: existing?.createdAt || firestoreApi.serverTimestamp(),
           createdBy: existing?.createdBy || uid,
@@ -1214,8 +1308,8 @@
       });
       const savedSnapshot = await firestoreApi.getDoc(ref);
       const saved = performanceEvaluationFromSnapshot(savedSnapshot);
-      await writePerformanceAuditLog({ action: before ? "UPDATE_EVALUATION" : "CREATE_EVALUATION", targetId: id, before, after: { ...saved, updatedAt: null } });
-      return saved;
+      if (!unchanged) await writePerformanceAuditLog({ action: before ? "UPDATE_EVALUATION" : "CREATE_EVALUATION", targetId: id, before, after: { ...saved, updatedAt: null } });
+      return attachWriteMeta(saved, unchanged ? "unchanged" : "written", unchanged ? 0 : 2);
     } catch (error) {
       if (error?.code === "VERSION_CONFLICT") throw error;
       throw friendlyError(error, "บันทึก Performance Summary ไม่สำเร็จ");
@@ -1264,10 +1358,13 @@
       throw new Error("คะแนนต้นทางหัวข้อ 1–5 ต้องอยู่ระหว่าง 20–100 และเพิ่มทีละ 5");
     }
     const expectedVersion = Math.max(0, Math.trunc(Number(input.expectedVersion) || 0));
+    const monthlyRevision = String(input.monthlyRevision || "");
+    const workdayRevision = String(input.workdayRevision || "");
     const id = performanceEvaluationId(year, employeeId, month);
     const ref = firestoreApi.doc(db, "evaluations", id);
     const employeeRef = firestoreApi.doc(db, "employees", employeeId);
     let before = null;
+    let unchanged = false;
     try {
       await firestoreApi.runTransaction(db, async (transaction) => {
         const [employeeSnapshot, existingSnapshot] = await Promise.all([
@@ -1283,11 +1380,16 @@
           conflict.code = "VERSION_CONFLICT";
           throw conflict;
         }
-        const disciplineScore = Array.isArray(existing?.scores) && Number.isInteger(Number(existing.scores[5]))
-          ? Number(existing.scores[5])
-          : 60;
+        const disciplineScore = Array.isArray(existing?.scores) && Number.isInteger(Number(existing.scores[5])) ? Number(existing.scores[5]) : 60;
         const disciplinePending = existing ? existing.disciplinePending === true : true;
         const scores = [...sourceScores, disciplineScore];
+        const existingMonthlyRevision = String(existing?.sourceSync?.monthlyPerformance?.sourceRevision || "");
+        const existingWorkdayRevision = String(existing?.sourceSync?.workdayInsight?.sourceRevision || "");
+        if (existing && sameValue(existing.scores, scores) && existingMonthlyRevision === monthlyRevision && existingWorkdayRevision === workdayRevision && String(existing.syncStatus || "") === "synced") {
+          unchanged = true;
+          before = { ...existing, createdAt: null, updatedAt: null };
+          return;
+        }
         before = existing ? { ...existing, createdAt: null, updatedAt: null } : null;
         transaction.set(ref, {
           employeeId,
@@ -1298,24 +1400,12 @@
           note: String(existing?.note || ""),
           source: "Employee Management Hub · Monthly Score Sync",
           sourceSync: {
-            monthlyPerformance: {
-              yearMonth: parsed.yearMonth,
-              sourceRevision: String(input.monthlyRevision || ""),
-              syncedAt: firestoreApi.serverTimestamp(),
-            },
-            workdayInsight: {
-              yearMonth: parsed.yearMonth,
-              sourceRevision: String(input.workdayRevision || ""),
-              syncedAt: firestoreApi.serverTimestamp(),
-            },
+            monthlyPerformance: { yearMonth: parsed.yearMonth, sourceRevision: monthlyRevision, syncedAt: firestoreApi.serverTimestamp() },
+            workdayInsight: { yearMonth: parsed.yearMonth, sourceRevision: workdayRevision, syncedAt: firestoreApi.serverTimestamp() },
           },
           scoreSources: {
-            capability: "monthlyPerformance",
-            quality: "monthlyPerformance",
-            responsibility: "monthlyPerformance",
-            effort: "monthlyPerformance",
-            punctuality: "workdayInsight",
-            discipline: existing?.scoreSources?.discipline || "manual",
+            capability: "monthlyPerformance", quality: "monthlyPerformance", responsibility: "monthlyPerformance",
+            effort: "monthlyPerformance", punctuality: "workdayInsight", discipline: existing?.scoreSources?.discipline || "manual",
           },
           syncStatus: "synced",
           disciplinePending,
@@ -1329,13 +1419,8 @@
       });
       const savedSnapshot = await firestoreApi.getDoc(ref);
       const saved = performanceEvaluationFromSnapshot(savedSnapshot);
-      await writePerformanceAuditLog({
-        action: "SYNC_MONTHLY_TO_PERFORMANCE_SUMMARY",
-        targetId: id,
-        before,
-        after: { ...saved, updatedAt: null },
-      });
-      return saved;
+      if (!unchanged) await writePerformanceAuditLog({ action: "SYNC_MONTHLY_TO_PERFORMANCE_SUMMARY", targetId: id, before, after: { ...saved, updatedAt: null } });
+      return attachWriteMeta(saved, unchanged ? "unchanged" : "written", unchanged ? 0 : 2);
     } catch (error) {
       if (error?.code === "VERSION_CONFLICT") throw error;
       throw friendlyError(error, "ส่งคะแนนไป Performance Summary ไม่สำเร็จ");
@@ -1382,21 +1467,15 @@
     const expectedIncentiveVersion = Math.max(0, Math.trunc(Number(input.expectedIncentiveVersion) || 0));
     let calculatedGpa = null;
     let calculatedAmount = null;
+    let unchanged = false;
     try {
       await firestoreApi.runTransaction(db, async (transaction) => {
-        const [evaluationSnapshot, incentiveSnapshot] = await Promise.all([
-          transaction.get(evaluationRef),
-          transaction.get(incentiveRef),
-        ]);
+        const [evaluationSnapshot, incentiveSnapshot] = await Promise.all([transaction.get(evaluationRef), transaction.get(incentiveRef)]);
         if (!evaluationSnapshot.exists()) throw new Error("ยังไม่มี Performance Summary ของพนักงานและเดือนนี้");
         await ensureMonthClosureEditable(transaction, parsed.yearMonth);
         const evaluation = evaluationSnapshot.data();
         const evaluationVersion = Number(evaluation.version) || 0;
-        if (evaluationVersion !== expectedEvaluationVersion) {
-          const conflict = new Error("Performance Summary ถูกแก้ไข กรุณาตรวจสอบใหม่");
-          conflict.code = "VERSION_CONFLICT";
-          throw conflict;
-        }
+        if (evaluationVersion !== expectedEvaluationVersion) { const conflict = new Error("Performance Summary ถูกแก้ไข กรุณาตรวจสอบใหม่"); conflict.code = "VERSION_CONFLICT"; throw conflict; }
         if (evaluation.disciplinePending === true) throw new Error("กรุณากรอกคะแนนการเคารพกฎระเบียบบริษัทให้ครบก่อน");
         calculatedGpa = calculatePerformanceGpa(evaluation.scores);
         calculatedAmount = performanceGpaIncentiveAmount(calculatedGpa);
@@ -1404,24 +1483,15 @@
 
         const existing = incentiveSnapshot.exists() ? incentiveSnapshot.data() : null;
         const currentVersion = Number(existing?.version) || 0;
-        if (currentVersion !== expectedIncentiveVersion) {
-          const conflict = new Error("Service Incentive ถูกแก้ไข กรุณาตรวจสอบใหม่");
-          conflict.code = "VERSION_CONFLICT";
-          throw conflict;
-        }
+        if (currentVersion !== expectedIncentiveVersion) { const conflict = new Error("Service Incentive ถูกแก้ไข กรุณาตรวจสอบใหม่"); conflict.code = "VERSION_CONFLICT"; throw conflict; }
         const salesAmount = normalizeMoney(existing?.salesAmount || 0, "ยอดขายของ");
         const timeAmount = normalizeMoney(existing?.timeAmount || 0, "ยอดเวลา");
         const evaluationAmount = normalizeMoney(calculatedAmount, "ยอดประเมิน");
         const totalAmount = normalizeMoney(salesAmount + evaluationAmount + timeAmount, "ยอดรวม");
+        const businessData = { employeeId, yearMonth: parsed.yearMonth, year: parsed.year, month: parsed.month, salesAmount, evaluationAmount, timeAmount, totalAmount };
+        if (sameFields(existing, businessData, Object.keys(businessData))) { unchanged = true; return; }
         const payload = {
-          employeeId,
-          yearMonth: parsed.yearMonth,
-          year: parsed.year,
-          month: parsed.month,
-          salesAmount,
-          evaluationAmount,
-          timeAmount,
-          totalAmount,
+          ...businessData,
           source: String(existing?.source || "Employee Hub / GPA Sync"),
           ...(existing?.sourceRecordId ? { sourceRecordId: existing.sourceRecordId } : {}),
           ...(existing?.sourceCreatedAt ? { sourceCreatedAt: existing.sourceCreatedAt } : {}),
@@ -1434,21 +1504,10 @@
           updatedBy: uid,
         };
         transaction.set(incentiveRef, payload);
-        transaction.set(auditRef, {
-          actorId: uid,
-          action: "SYNC_GPA_TO_SERVICE_INCENTIVE",
-          targetType: "serviceIncentive",
-          targetId: incentiveId,
-          before: existing || null,
-          after: { ...payload, createdAt: null, updatedAt: null },
-          createdAt: firestoreApi.serverTimestamp(),
-        });
+        transaction.set(auditRef, { actorId: uid, action: "SYNC_GPA_TO_SERVICE_INCENTIVE", targetType: "serviceIncentive", targetId: incentiveId, before: existing || null, after: { ...payload, createdAt: null, updatedAt: null }, createdAt: firestoreApi.serverTimestamp() });
       });
-      return {
-        incentive: incentiveFromSnapshot(await firestoreApi.getDoc(incentiveRef)),
-        gpa: calculatedGpa,
-        evaluationAmount: calculatedAmount,
-      };
+      const incentive = incentiveFromSnapshot(await firestoreApi.getDoc(incentiveRef));
+      return { incentive: attachWriteMeta(incentive, unchanged ? "unchanged" : "written", unchanged ? 0 : 2), gpa: calculatedGpa, evaluationAmount: calculatedAmount };
     } catch (error) {
       if (error?.code === "VERSION_CONFLICT") throw error;
       throw friendlyError(error, "ส่งเงินประเมินไป Service Incentive ไม่สำเร็จ");
@@ -1463,19 +1522,16 @@
     const ref = firestoreApi.doc(db, "settings", "main");
     try {
       let result = null;
+      let unchanged = false;
       await firestoreApi.runTransaction(db, async (transaction) => {
         const snapshot = await transaction.get(ref);
         const current = snapshot.exists() ? snapshot.data() : {};
         const years = [...new Set([...(Array.isArray(current.years) ? current.years.map(Number) : []), year])].filter(Number.isFinite).sort((a, b) => a - b);
         result = { activeYear: year, years };
-        transaction.set(ref, {
-          activeYear: year,
-          years,
-          updatedAt: firestoreApi.serverTimestamp(),
-          updatedBy: uid,
-        });
+        if (Number(current.activeYear) === year && sameValue((current.years || []).map(Number).sort((a, b) => a - b), years)) { unchanged = true; return; }
+        transaction.set(ref, { activeYear: year, years, updatedAt: firestoreApi.serverTimestamp(), updatedBy: uid });
       });
-      return result;
+      return { ...result, _writeStatus: unchanged ? "unchanged" : "written", _estimatedWrites: unchanged ? 0 : 1 };
     } catch (error) {
       throw friendlyError(error, "เพิ่มปีประเมินไม่สำเร็จ");
     }
@@ -1635,7 +1691,7 @@
     assertReady();
     const uid = currentUid();
     const releaseVersion = String(input.releaseVersion || "").trim();
-    if (releaseVersion !== "1.0.1") throw new Error("รองรับการรับรอง Production v1.0.1 เท่านั้น");
+    if (releaseVersion !== "1.0.3") throw new Error("รองรับการรับรอง Production v1.0.3 เท่านั้น");
 
     const requiredManualKeys = ["workflow", "exports", "responsive", "backupStored", "legacyReadOnly"];
     const manualChecks = Object.fromEntries(requiredManualKeys.map((key) => [key, input.manualChecks?.[key] === true]));
@@ -1722,7 +1778,6 @@
     const isActive = input.isActive !== false;
     const sortOrder = Math.max(0, Math.trunc(Number(input.sortOrder) || 0));
     const expectedVersion = Math.max(0, Math.trunc(Number(input.expectedVersion) || 0));
-
     if (fullName.length < 2 || fullName.length > 100) throw new Error("ชื่อพนักงานต้องยาว 2–100 ตัวอักษร");
     if (employeeCode && !/^[A-Z0-9_-]{2,20}$/.test(employeeCode)) throw new Error("รหัสพนักงานใช้ A–Z, 0–9, _ หรือ - ความยาว 2–20 ตัวอักษร");
     if (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) throw new Error("วันที่เริ่มงานต้องอยู่ในรูปแบบ YYYY-MM-DD");
@@ -1731,69 +1786,42 @@
     const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
     let before = null;
     let oldNameHash = "";
+    let unchanged = false;
+    let nameChanged = false;
     const newNameHash = await hashText(normalizeName(fullName));
     const newNameRef = firestoreApi.doc(db, "employeeNames", newNameHash);
 
     try {
       await firestoreApi.runTransaction(db, async (transaction) => {
-        const [snapshot, nameSnapshot] = await Promise.all([
-          transaction.get(employeeRef),
-          transaction.get(newNameRef),
-        ]);
+        const [snapshot, nameSnapshot] = await Promise.all([transaction.get(employeeRef), transaction.get(newNameRef)]);
         before = snapshot.exists() ? snapshot.data() : null;
-        if (nameSnapshot.exists() && nameSnapshot.data().employeeId !== id) {
-          throw new Error("มีชื่อพนักงานนี้อยู่แล้ว");
-        }
+        if (nameSnapshot.exists() && nameSnapshot.data().employeeId !== id) throw new Error("มีชื่อพนักงานนี้อยู่แล้ว");
         const currentVersion = Number(before?.version) || 0;
-        if (snapshot.exists() && currentVersion !== expectedVersion) {
-          const conflict = new Error("VERSION_CONFLICT");
-          conflict.code = "VERSION_CONFLICT";
-          throw conflict;
-        }
+        if (snapshot.exists() && currentVersion !== expectedVersion) { const conflict = new Error("VERSION_CONFLICT"); conflict.code = "VERSION_CONFLICT"; throw conflict; }
+        const businessData = { name: fullName, fullName, nameNormalized: normalizeName(fullName), employeeCode, startDate, isActive, sortOrder };
+        if (sameFields(before, businessData, Object.keys(businessData)) && nameSnapshot.exists()) { unchanged = true; return; }
         if (before?.name) oldNameHash = await hashText(normalizeName(before.name));
-        const nextVersion = currentVersion + 1;
+        nameChanged = !before || oldNameHash !== newNameHash || !nameSnapshot.exists();
         const data = {
-          name: fullName,
-          fullName,
-          nameNormalized: normalizeName(fullName),
-          employeeCode,
-          startDate,
-          isActive,
-          sortOrder,
+          ...businessData,
           legacyIds: before?.legacyIds || input.legacyIds || {},
           source: String(before?.source || input.source || "Employee Hub"),
-          version: nextVersion,
+          version: currentVersion + 1,
           createdAt: before?.createdAt || firestoreApi.serverTimestamp(),
           createdBy: before?.createdBy || uid,
           updatedAt: firestoreApi.serverTimestamp(),
           updatedBy: uid,
         };
         transaction.set(employeeRef, data);
-        transaction.set(newNameRef, {
-          employeeId: id,
-          normalizedName: normalizeName(fullName),
-          createdAt: firestoreApi.serverTimestamp(),
-        });
-        transaction.set(auditRef, {
-          actorId: uid,
-          action: before ? "UPDATE_EMPLOYEE_MASTER" : "CREATE_EMPLOYEE_MASTER",
-          targetType: "employee",
-          targetId: id,
-          before: before || null,
-          after: { ...data, createdAt: null, updatedAt: null },
-          createdAt: firestoreApi.serverTimestamp(),
-        });
+        if (nameChanged) transaction.set(newNameRef, { employeeId: id, normalizedName: normalizeName(fullName), createdAt: firestoreApi.serverTimestamp() });
+        transaction.set(auditRef, { actorId: uid, action: before ? "UPDATE_EMPLOYEE_MASTER" : "CREATE_EMPLOYEE_MASTER", targetType: "employee", targetId: id, before: before || null, after: { ...data, createdAt: null, updatedAt: null }, createdAt: firestoreApi.serverTimestamp() });
       });
-
-      if (oldNameHash && oldNameHash !== newNameHash) {
-        try {
-          await firestoreApi.deleteDoc(firestoreApi.doc(db, "employeeNames", oldNameHash));
-        } catch (cleanupError) {
-          console.warn("ลบ Name Index เดิมไม่สำเร็จ แต่ข้อมูลพนักงานบันทึกแล้ว", cleanupError);
-        }
+      if (!unchanged && nameChanged && oldNameHash && oldNameHash !== newNameHash) {
+        try { await firestoreApi.deleteDoc(firestoreApi.doc(db, "employeeNames", oldNameHash)); }
+        catch (cleanupError) { console.warn("ลบ Name Index เดิมไม่สำเร็จ แต่ข้อมูลพนักงานบันทึกแล้ว", cleanupError); }
       }
-
-      return employeeFromSnapshot(await firestoreApi.getDoc(employeeRef));
+      const saved = employeeFromSnapshot(await firestoreApi.getDoc(employeeRef));
+      return attachWriteMeta(saved, unchanged ? "unchanged" : "written", unchanged ? 0 : (nameChanged ? 3 : 2));
     } catch (error) {
       if (error?.code === "VERSION_CONFLICT" || error?.message === "VERSION_CONFLICT") throw error;
       throw friendlyError(error, "บันทึกข้อมูลพนักงานไม่สำเร็จ");
@@ -1814,34 +1842,20 @@
     const ref = firestoreApi.doc(db, "serviceIncentives", documentId);
     const employeeRef = firestoreApi.doc(db, "employees", employeeId);
     const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
-
+    let unchanged = false;
     try {
       await firestoreApi.runTransaction(db, async (transaction) => {
-        const [employeeSnapshot, existingSnapshot] = await Promise.all([
-          transaction.get(employeeRef),
-          transaction.get(ref),
-        ]);
+        const [employeeSnapshot, existingSnapshot] = await Promise.all([transaction.get(employeeRef), transaction.get(ref)]);
         if (!employeeSnapshot.exists()) throw new Error("ไม่พบพนักงานที่เลือก");
         if (employeeSnapshot.data().isActive === false) throw new Error("พนักงานคนนี้ถูกปิดใช้งาน");
         await ensureMonthClosureEditable(transaction, yearMonth);
-
         const existing = existingSnapshot.exists() ? existingSnapshot.data() : null;
         const currentVersion = Number(existing?.version) || 0;
-        if (currentVersion !== expectedVersion) {
-          const conflict = new Error("VERSION_CONFLICT");
-          conflict.code = "VERSION_CONFLICT";
-          throw conflict;
-        }
-
+        if (currentVersion !== expectedVersion) { const conflict = new Error("VERSION_CONFLICT"); conflict.code = "VERSION_CONFLICT"; throw conflict; }
+        const businessData = { employeeId, yearMonth, year, month, salesAmount, evaluationAmount, timeAmount, totalAmount };
+        if (sameFields(existing, businessData, Object.keys(businessData))) { unchanged = true; return; }
         const payload = {
-          employeeId,
-          yearMonth,
-          year,
-          month,
-          salesAmount,
-          evaluationAmount,
-          timeAmount,
-          totalAmount,
+          ...businessData,
           source: String(existing?.source || "Employee Hub / Firebase"),
           ...(existing?.sourceRecordId ? { sourceRecordId: existing.sourceRecordId } : {}),
           ...(existing?.sourceCreatedAt ? { sourceCreatedAt: existing.sourceCreatedAt } : {}),
@@ -1854,17 +1868,10 @@
           updatedBy: uid,
         };
         transaction.set(ref, payload);
-        transaction.set(auditRef, {
-          actorId: uid,
-          action: existing ? "UPDATE_SERVICE_INCENTIVE" : "CREATE_SERVICE_INCENTIVE",
-          targetType: "serviceIncentive",
-          targetId: documentId,
-          before: existing || null,
-          after: { ...payload, createdAt: null, updatedAt: null },
-          createdAt: firestoreApi.serverTimestamp(),
-        });
+        transaction.set(auditRef, { actorId: uid, action: existing ? "UPDATE_SERVICE_INCENTIVE" : "CREATE_SERVICE_INCENTIVE", targetType: "serviceIncentive", targetId: documentId, before: existing || null, after: { ...payload, createdAt: null, updatedAt: null }, createdAt: firestoreApi.serverTimestamp() });
       });
-      return incentiveFromSnapshot(await firestoreApi.getDoc(ref));
+      const saved = incentiveFromSnapshot(await firestoreApi.getDoc(ref));
+      return attachWriteMeta(saved, unchanged ? "unchanged" : "written", unchanged ? 0 : 2);
     } catch (error) {
       if (error?.code === "VERSION_CONFLICT" || error?.message === "VERSION_CONFLICT") throw error;
       throw friendlyError(error, "บันทึก Service Incentive ไม่สำเร็จ");
@@ -1909,7 +1916,7 @@
     const ref = firestoreApi.doc(db, "attendanceMonthly", documentId);
     const employeeRef = firestoreApi.doc(db, "employees", employeeId);
     const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
-
+    let unchanged = false;
     try {
       await firestoreApi.runTransaction(db, async (transaction) => {
         const [employeeSnapshot, existingSnapshot] = await Promise.all([transaction.get(employeeRef), transaction.get(ref)]);
@@ -1918,13 +1925,11 @@
         await ensureMonthClosureEditable(transaction, yearMonth);
         const existing = existingSnapshot.exists() ? existingSnapshot.data() : null;
         const currentVersion = Number(existing?.version) || 0;
-        if (currentVersion !== expectedVersion) {
-          const conflict = new Error("VERSION_CONFLICT");
-          conflict.code = "VERSION_CONFLICT";
-          throw conflict;
-        }
+        if (currentVersion !== expectedVersion) { const conflict = new Error("VERSION_CONFLICT"); conflict.code = "VERSION_CONFLICT"; throw conflict; }
+        const businessData = { employeeId, yearMonth, year, month, lateMinutes, lateScore };
+        if (sameFields(existing, businessData, Object.keys(businessData))) { unchanged = true; return; }
         const payload = {
-          employeeId, yearMonth, year, month, lateMinutes, lateScore,
+          ...businessData,
           source: String(existing?.source || "Employee Hub / Firebase"),
           ...(existing?.sourceRecordId ? { sourceRecordId: existing.sourceRecordId } : {}),
           ...(existing?.sourceDate ? { sourceDate: existing.sourceDate } : {}),
@@ -1936,13 +1941,10 @@
           updatedBy: uid,
         };
         transaction.set(ref, payload);
-        transaction.set(auditRef, {
-          actorId: uid, action: existing ? "UPDATE_ATTENDANCE_MONTHLY" : "CREATE_ATTENDANCE_MONTHLY",
-          targetType: "attendanceMonthly", targetId: documentId, before: existing || null,
-          after: { ...payload, createdAt: null, updatedAt: null }, createdAt: firestoreApi.serverTimestamp(),
-        });
+        transaction.set(auditRef, { actorId: uid, action: existing ? "UPDATE_ATTENDANCE_MONTHLY" : "CREATE_ATTENDANCE_MONTHLY", targetType: "attendanceMonthly", targetId: documentId, before: existing || null, after: { ...payload, createdAt: null, updatedAt: null }, createdAt: firestoreApi.serverTimestamp() });
       });
-      return attendanceFromSnapshot(await firestoreApi.getDoc(ref));
+      const saved = attendanceFromSnapshot(await firestoreApi.getDoc(ref));
+      return attachWriteMeta(saved, unchanged ? "unchanged" : "written", unchanged ? 0 : 2);
     } catch (error) {
       if (error?.code === "VERSION_CONFLICT" || error?.message === "VERSION_CONFLICT") throw error;
       throw friendlyError(error, "บันทึกเวลาสายไม่สำเร็จ");
@@ -1985,7 +1987,7 @@
     const ref = firestoreApi.doc(db, "leaveRecords", id);
     const employeeRef = firestoreApi.doc(db, "employees", employeeId);
     const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
-
+    let unchanged = false;
     try {
       await firestoreApi.runTransaction(db, async (transaction) => {
         const [employeeSnapshot, existingSnapshot] = await Promise.all([transaction.get(employeeRef), transaction.get(ref)]);
@@ -1994,11 +1996,11 @@
         await ensureMonthClosureEditable(transaction, yearMonth);
         const existing = existingSnapshot.exists() ? existingSnapshot.data() : null;
         const currentVersion = Number(existing?.version) || 0;
-        if (currentVersion !== expectedVersion) {
-          const conflict = new Error("VERSION_CONFLICT"); conflict.code = "VERSION_CONFLICT"; throw conflict;
-        }
+        if (currentVersion !== expectedVersion) { const conflict = new Error("VERSION_CONFLICT"); conflict.code = "VERSION_CONFLICT"; throw conflict; }
+        const businessData = { employeeId, date, yearMonth, year, month, leaveType, days, note, excludeHolidays };
+        if (sameFields(existing, businessData, Object.keys(businessData))) { unchanged = true; return; }
         const payload = {
-          employeeId, date, yearMonth, year, month, leaveType, days, note, excludeHolidays,
+          ...businessData,
           source: String(existing?.source || "Employee Hub / Firebase"),
           ...(existing?.sourceRecordId ? { sourceRecordId: existing.sourceRecordId } : {}),
           ...(existing?.originalLeaveType ? { originalLeaveType: existing.originalLeaveType } : {}),
@@ -2013,7 +2015,8 @@
         transaction.set(ref, payload);
         transaction.set(auditRef, { actorId: uid, action: existing ? "UPDATE_LEAVE_RECORD" : "CREATE_LEAVE_RECORD", targetType: "leaveRecord", targetId: id, before: existing || null, after: { ...payload, createdAt: null, updatedAt: null }, createdAt: firestoreApi.serverTimestamp() });
       });
-      return leaveFromSnapshot(await firestoreApi.getDoc(ref));
+      const saved = leaveFromSnapshot(await firestoreApi.getDoc(ref));
+      return attachWriteMeta(saved, unchanged ? "unchanged" : "written", unchanged ? 0 : 2);
     } catch (error) {
       if (error?.code === "VERSION_CONFLICT" || error?.message === "VERSION_CONFLICT") throw error;
       throw friendlyError(error, "บันทึกวันลาไม่สำเร็จ");
@@ -2048,7 +2051,7 @@
     assertReady();
     const uid = currentUid();
     const ref = firestoreApi.doc(db, "workdaySettings", "main");
-    const payload = {
+    const businessData = {
       configured: true,
       sickAnnualDays: normalizePolicyNumber(input.sickAnnualDays, "สิทธิลาป่วย"),
       personalAnnualDays: normalizePolicyNumber(input.personalAnnualDays, "สิทธิลากิจ"),
@@ -2060,13 +2063,21 @@
       vacationAfter15Years: 15,
       vacationReference: input.vacationReference === "yearEnd" ? "yearEnd" : "jan1",
       note: String(input.note || "").trim().slice(0, 1000),
-      updatedAt: firestoreApi.serverTimestamp(),
-      updatedBy: uid,
     };
     try {
-      await firestoreApi.setDoc(ref, payload);
-      await firestoreApi.addDoc(firestoreApi.collection(db, "auditLogs"), { actorId: uid, action: "UPDATE_WORKDAY_SETTINGS", targetType: "workdaySettings", targetId: "main", before: null, after: { ...payload, updatedAt: null }, createdAt: firestoreApi.serverTimestamp() });
-      return workdaySettingsFromSnapshot(await firestoreApi.getDoc(ref));
+      const beforeSnapshot = await firestoreApi.getDoc(ref);
+      const before = beforeSnapshot.exists() ? beforeSnapshot.data() : null;
+      if (sameFields(before, businessData, Object.keys(businessData))) {
+        return attachWriteMeta(workdaySettingsFromSnapshot(beforeSnapshot), "unchanged", 0);
+      }
+      const payload = { ...businessData, updatedAt: firestoreApi.serverTimestamp(), updatedBy: uid };
+      const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+      const batch = firestoreApi.writeBatch(db);
+      batch.set(ref, payload);
+      batch.set(auditRef, { actorId: uid, action: "UPDATE_WORKDAY_SETTINGS", targetType: "workdaySettings", targetId: "main", before: before || null, after: { ...payload, updatedAt: null }, createdAt: firestoreApi.serverTimestamp() });
+      await batch.commit();
+      const saved = workdaySettingsFromSnapshot(await firestoreApi.getDoc(ref));
+      return attachWriteMeta(saved, "written", 2);
     } catch (error) {
       throw friendlyError(error, "บันทึกการตั้งค่าสิทธิ์วันลาไม่สำเร็จ");
     }
@@ -2182,12 +2193,12 @@
     loadPerformanceSettings,
     loadPerformanceEvaluations,
     loadPerformanceSnapshot,
-    savePerformanceEvaluation,
+    savePerformanceEvaluation: (input) => runWriteOnce(`savePerformanceEvaluation:${input?.employeeId || ""}:${input?.year || ""}:${input?.month ?? ""}`, () => savePerformanceEvaluation(input)),
     loadPerformanceScoreSyncSnapshot,
-    syncPerformanceEvaluationFromSources,
+    syncPerformanceEvaluationFromSources: (input) => runWriteOnce(`syncPerformanceEvaluation:${input?.employeeId || ""}:${input?.yearMonth || ""}`, () => syncPerformanceEvaluationFromSources(input)),
     loadPerformanceIncentiveSyncSnapshot,
-    syncPerformanceGpaToServiceIncentive,
-    addPerformanceYear,
+    syncPerformanceGpaToServiceIncentive: (input) => runWriteOnce(`syncPerformanceIncentive:${input?.employeeId || ""}:${input?.yearMonth || ""}`, () => syncPerformanceGpaToServiceIncentive(input)),
+    addPerformanceYear: (value) => runWriteOnce(`addPerformanceYear:${value}`, () => addPerformanceYear(value)),
     loadEmployee360Snapshot,
     getMigrationStatus,
     loadHubSnapshot,
@@ -2195,30 +2206,30 @@
     loadLeaveRecords,
     loadWorkdaySettings,
     loadWorkdaySnapshot,
-    saveEmployee,
-    saveServiceIncentive,
-    deleteServiceIncentive,
-    saveAttendanceMonthly,
-    deleteAttendanceMonthly,
-    saveLeaveRecord,
-    deleteLeaveRecord,
-    saveWorkdaySettings,
+    saveEmployee: (input) => runWriteOnce(`saveEmployee:${input?.id || normalizeName(input?.fullName || "new")}`, () => saveEmployee(input)),
+    saveServiceIncentive: (input) => runWriteOnce(`saveServiceIncentive:${input?.employeeId || ""}:${input?.yearMonth || ""}`, () => saveServiceIncentive(input)),
+    deleteServiceIncentive: (documentId) => runWriteOnce(`deleteServiceIncentive:${documentId}`, () => deleteServiceIncentive(documentId)),
+    saveAttendanceMonthly: (input) => runWriteOnce(`saveAttendanceMonthly:${input?.employeeId || ""}:${input?.yearMonth || ""}`, () => saveAttendanceMonthly(input)),
+    deleteAttendanceMonthly: (documentId) => runWriteOnce(`deleteAttendanceMonthly:${documentId}`, () => deleteAttendanceMonthly(documentId)),
+    saveLeaveRecord: (input) => runWriteOnce(`saveLeaveRecord:${input?.id || input?.employeeId || "new"}:${input?.date || ""}`, () => saveLeaveRecord(input)),
+    deleteLeaveRecord: (documentId) => runWriteOnce(`deleteLeaveRecord:${documentId}`, () => deleteLeaveRecord(documentId)),
+    saveWorkdaySettings: (input) => runWriteOnce("saveWorkdaySettings:main", () => saveWorkdaySettings(input)),
     loadDailyPerformanceEntries,
     loadMonthlyPerformanceOverrides,
     loadMonthlyPerformanceMonthStatus,
     loadMonthClosure,
-    finalizeMonthClosure,
-    reopenMonthClosure,
+    finalizeMonthClosure: (input) => runWriteOnce(`finalizeMonthClosure:${input?.yearMonth || ""}`, () => finalizeMonthClosure(input)),
+    reopenMonthClosure: (input) => runWriteOnce(`reopenMonthClosure:${input?.yearMonth || ""}`, () => reopenMonthClosure(input)),
     loadMonthlyPerformanceSnapshot,
-    saveDailyPerformanceEntry,
-    saveDailyPerformanceEntriesBatch,
-    deleteDailyPerformanceEntry,
-    saveMonthlyPerformanceOverride,
-    deleteMonthlyPerformanceOverride,
-    setMonthlyPerformanceMonthStatus,
+    saveDailyPerformanceEntry: (input) => runWriteOnce(`saveDailyPerformanceEntry:${input?.employeeId || ""}:${input?.date || ""}`, () => saveDailyPerformanceEntry(input)),
+    saveDailyPerformanceEntriesBatch: (input) => runWriteOnce(`saveDailyPerformanceEntriesBatch:${input?.date || ""}`, () => saveDailyPerformanceEntriesBatch(input)),
+    deleteDailyPerformanceEntry: (documentId) => runWriteOnce(`deleteDailyPerformanceEntry:${documentId}`, () => deleteDailyPerformanceEntry(documentId)),
+    saveMonthlyPerformanceOverride: (input) => runWriteOnce(`saveMonthlyPerformanceOverride:${input?.employeeId || ""}:${input?.yearMonth || ""}`, () => saveMonthlyPerformanceOverride(input)),
+    deleteMonthlyPerformanceOverride: (documentId) => runWriteOnce(`deleteMonthlyPerformanceOverride:${documentId}`, () => deleteMonthlyPerformanceOverride(documentId)),
+    setMonthlyPerformanceMonthStatus: (input) => runWriteOnce(`setMonthlyPerformanceMonthStatus:${input?.yearMonth || ""}`, () => setMonthlyPerformanceMonthStatus(input)),
     loadAuditLogs,
     loadProductionRelease,
-    acceptProductionRelease,
+    acceptProductionRelease: (input) => runWriteOnce(`acceptProductionRelease:${input?.releaseVersion || ""}`, () => acceptProductionRelease(input)),
     loadSystemSnapshot,
     createSystemBackup,
   });

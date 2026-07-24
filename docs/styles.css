@@ -1332,3 +1332,7 @@ tbody tr:nth-child(even):hover td { background: rgba(226,246,251,.46); }
 .overview-nav + .workflow-heading { margin-top: 4px; }
 .overview-nav .nav-item::after { content: ""; }
 .workflow-heading { padding-top: 18px; }
+
+
+/* Production v1.0.3 — Firestore write optimization */
+.write-optimized-note { font-variant-numeric: tabular-nums; }

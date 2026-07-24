@@ -2,10 +2,10 @@
 
 const APP_RELEASE = Object.freeze({
   product: "Employee Management Hub",
-  version: "1.0.2",
-  phase: "Menu Restore Fix",
-  releaseName: "Modern Workspace · Restored Navigation",
-  releasedAt: "2026-07-23",
+  version: "1.0.3",
+  phase: "Write Optimization",
+  releaseName: "Firestore Write Optimization · Duplicate Guard",
+  releasedAt: "2026-07-24",
 });
 
 const RELEASE_MANUAL_CHECKS = Object.freeze([
@@ -3102,14 +3102,14 @@ function bindMonthlyEntryEvents() {
         const result = await window.EmployeeHubDatabase.saveDailyPerformanceEntriesBatch({
           employeeIds: sortedActiveEmployees().map((employee) => employee.id), date, status, note, scores,
         });
-        showToast(`บันทึกพนักงานทุกคนสำเร็จ ${result.count} รายการ`);
+        showToast(result.count ? `บันทึกเฉพาะข้อมูลที่เปลี่ยน ${result.count} รายการ · ข้ามข้อมูลเดิม ${result.unchangedCount || 0} รายการ` : `ข้อมูลเหมือนเดิมทั้งหมด ${result.unchangedCount || result.total || 0} รายการ · ไม่ใช้โควตาเขียน`);
       } else {
-        await window.EmployeeHubDatabase.saveDailyPerformanceEntry({
+        const savedEntry = await window.EmployeeHubDatabase.saveDailyPerformanceEntry({
           id: editing?.id, employeeId, date, status, note, scores,
           expectedVersion: editing?.version || 0,
           legacyException: editing?.legacyException === true,
         });
-        showToast(editing ? "อัปเดตข้อมูลรายวันแล้ว" : "บันทึกข้อมูลรายวันแล้ว");
+        showToast(savedEntry?._writeStatus === "unchanged" ? "ข้อมูลเหมือนเดิม จึงไม่ใช้โควตาเขียน" : (editing ? "อัปเดตข้อมูลรายวันแล้ว" : "บันทึกข้อมูลรายวันแล้ว"));
       }
       state.monthlyEditingId = "";
       state.monthlyEmployeeId = employeeId === MONTHLY_ALL_EMPLOYEES_ID ? "" : employeeId;
