@@ -2,10 +2,10 @@
 
 const APP_RELEASE = Object.freeze({
   product: "Employee Management Hub",
-  version: "1.0.3",
-  phase: "Write Optimization",
-  releaseName: "Firestore Write Optimization · Duplicate Guard",
-  releasedAt: "2026-07-24",
+  version: "1.0.4",
+  phase: "Popup UI Refresh",
+  releaseName: "Modern Popup Experience · Accessible Dialog System",
+  releasedAt: "2026-07-25",
 });
 
 const RELEASE_MANUAL_CHECKS = Object.freeze([
@@ -302,12 +302,169 @@ function setBusy(isBusy, label = "กำลังโหลดข้อมูล"
 
 function showToast(message, type = "success", timeout = 4200) {
   const toast = document.createElement("div");
+  const config = {
+    success: { icon: "circle-check", title: "ดำเนินการสำเร็จ" },
+    error: { icon: "circle-alert", title: "ไม่สามารถดำเนินการได้" },
+    warning: { icon: "triangle-alert", title: "โปรดตรวจสอบ" },
+    info: { icon: "info", title: "ข้อมูล" },
+  }[type] || { icon: "circle-check", title: "ดำเนินการสำเร็จ" };
   toast.className = `toast toast-${type}`;
-  const icon = type === "error" ? "circle-alert" : type === "warning" ? "triangle-alert" : "circle-check";
-  toast.innerHTML = `<i data-lucide="${icon}"></i><div>${escapeHtml(message)}</div>`;
+  toast.setAttribute("role", type === "error" ? "alert" : "status");
+  toast.innerHTML = `
+    <span class="toast-icon"><i data-lucide="${config.icon}"></i></span>
+    <div class="toast-copy"><strong>${escapeHtml(config.title)}</strong><p>${escapeHtml(message)}</p></div>
+    <button class="toast-close" type="button" aria-label="ปิดการแจ้งเตือน"><i data-lucide="x"></i></button>
+    <span class="toast-progress" style="--toast-duration:${Math.max(1200, Number(timeout) || 4200)}ms"></span>`;
   els.toastRegion.appendChild(toast);
   ensureIcons();
-  window.setTimeout(() => toast.remove(), timeout);
+  const remove = () => {
+    if (!toast.isConnected) return;
+    toast.classList.add("toast-leave");
+    window.setTimeout(() => toast.remove(), 180);
+  };
+  toast.querySelector(".toast-close")?.addEventListener("click", remove);
+  window.setTimeout(remove, timeout);
+}
+
+let activeDialogState = null;
+
+function dialogToneConfig(tone = "info") {
+  return {
+    info: { icon: "sparkles", eyebrow: "SYSTEM MESSAGE", confirmClass: "button-primary" },
+    success: { icon: "circle-check", eyebrow: "READY TO CONTINUE", confirmClass: "button-primary" },
+    warning: { icon: "triangle-alert", eyebrow: "CONFIRM ACTION", confirmClass: "button-primary" },
+    danger: { icon: "trash-2", eyebrow: "DESTRUCTIVE ACTION", confirmClass: "button-danger" },
+  }[tone] || { icon: "sparkles", eyebrow: "SYSTEM MESSAGE", confirmClass: "button-primary" };
+}
+
+function dismissActiveDialog() {
+  if (activeDialogState?.finish) activeDialogState.finish(activeDialogState.cancelValue);
+  else if (els.modalRoot) els.modalRoot.innerHTML = "";
+}
+
+function openModernDialog({
+  title,
+  message = "",
+  tone = "info",
+  icon = "",
+  eyebrow = "",
+  confirmText = "ยืนยัน",
+  cancelText = "ยกเลิก",
+  details = [],
+  input = null,
+  cancelValue = false,
+}) {
+  return new Promise((resolve) => {
+    dismissActiveDialog();
+    const previousFocus = document.activeElement;
+    const config = dialogToneConfig(tone);
+    const inputId = "modernDialogInput";
+    const detailsMarkup = details.length ? `<div class="dialog-detail-list">${details.map((detail) => `
+      <div class="dialog-detail-item">
+        <span class="dialog-detail-icon"><i data-lucide="${escapeHtml(detail.icon || "check")}"></i></span>
+        <div><span>${escapeHtml(detail.label || "")}</span>${detail.value !== undefined && detail.value !== null && detail.value !== "" ? `<strong>${escapeHtml(detail.value)}</strong>` : ""}</div>
+      </div>`).join("")}</div>` : "";
+    const inputMarkup = input ? `
+      <div class="dialog-field">
+        <label for="${inputId}">${escapeHtml(input.label || "รายละเอียด")}${input.required ? `<span aria-hidden="true"> *</span>` : ""}</label>
+        ${input.multiline
+          ? `<textarea id="${inputId}" rows="${Number(input.rows) || 4}" maxlength="${Number(input.maxLength) || 500}" placeholder="${escapeHtml(input.placeholder || "")}">${escapeHtml(input.defaultValue || "")}</textarea>`
+          : `<input id="${inputId}" type="${escapeHtml(input.type || "text")}" value="${escapeHtml(input.defaultValue || "")}" ${input.min !== undefined ? `min="${escapeHtml(input.min)}"` : ""} ${input.max !== undefined ? `max="${escapeHtml(input.max)}"` : ""} maxlength="${Number(input.maxLength) || 120}" placeholder="${escapeHtml(input.placeholder || "")}" />`}
+        ${input.helper ? `<small>${escapeHtml(input.helper)}</small>` : ""}
+        <p id="modernDialogError" class="dialog-field-error" role="alert" hidden></p>
+      </div>` : "";
+
+    els.modalRoot.innerHTML = `
+      <div class="modal-backdrop modern-dialog-backdrop" role="presentation">
+        <section class="modal-card action-dialog action-dialog-${escapeHtml(tone)}" role="dialog" aria-modal="true" aria-labelledby="modernDialogTitle" aria-describedby="modernDialogMessage">
+          <span class="dialog-glow" aria-hidden="true"></span>
+          <button id="modernDialogClose" class="icon-button dialog-close-button" type="button" aria-label="ปิด"><i data-lucide="x"></i></button>
+          <div class="dialog-hero">
+            <span class="dialog-hero-icon"><i data-lucide="${escapeHtml(icon || config.icon)}"></i></span>
+            <div class="dialog-hero-copy">
+              <p class="eyebrow">${escapeHtml(eyebrow || config.eyebrow)}</p>
+              <h2 id="modernDialogTitle">${escapeHtml(title)}</h2>
+              ${message ? `<p id="modernDialogMessage" class="dialog-message">${escapeHtml(message)}</p>` : `<span id="modernDialogMessage" hidden></span>`}
+            </div>
+          </div>
+          <form id="modernDialogForm" novalidate>
+            <div class="dialog-body">${detailsMarkup}${inputMarkup}</div>
+            <div class="dialog-actions">
+              <button id="modernDialogCancel" class="button button-ghost" type="button">${escapeHtml(cancelText)}</button>
+              <button id="modernDialogConfirm" class="button ${config.confirmClass}" type="submit"><i data-lucide="${tone === "danger" ? "trash-2" : "check"}"></i>${escapeHtml(confirmText)}</button>
+            </div>
+          </form>
+        </section>
+      </div>`;
+    ensureIcons();
+    document.body.classList.add("modal-open");
+
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      activeDialogState = null;
+      els.modalRoot.innerHTML = "";
+      document.body.classList.remove("modal-open");
+      if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus({ preventScroll: true });
+      resolve(value);
+    };
+    activeDialogState = { finish, cancelValue };
+
+    const backdrop = els.modalRoot.querySelector(".modern-dialog-backdrop");
+    const card = els.modalRoot.querySelector(".action-dialog");
+    const form = document.getElementById("modernDialogForm");
+    const field = input ? document.getElementById(inputId) : null;
+    const errorNode = document.getElementById("modernDialogError");
+    const cancel = () => finish(cancelValue);
+    document.getElementById("modernDialogClose")?.addEventListener("click", cancel);
+    document.getElementById("modernDialogCancel")?.addEventListener("click", cancel);
+    backdrop?.addEventListener("click", (event) => { if (event.target === event.currentTarget) cancel(); });
+    form?.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (!input) return finish(true);
+      const value = String(field?.value ?? "").trim();
+      let validationMessage = "";
+      if (input.required && !value) validationMessage = input.requiredMessage || "กรุณากรอกข้อมูลก่อนดำเนินการ";
+      else if (input.minLength && value.length < Number(input.minLength)) validationMessage = input.minLengthMessage || `กรุณากรอกอย่างน้อย ${input.minLength} ตัวอักษร`;
+      else if (input.type === "number" && value && !Number.isFinite(Number(value))) validationMessage = "กรุณากรอกเป็นตัวเลข";
+      else if (input.type === "number" && input.min !== undefined && Number(value) < Number(input.min)) validationMessage = `ค่าต้องไม่น้อยกว่า ${input.min}`;
+      else if (input.type === "number" && input.max !== undefined && Number(value) > Number(input.max)) validationMessage = `ค่าต้องไม่เกิน ${input.max}`;
+      if (validationMessage) {
+        errorNode.textContent = validationMessage;
+        errorNode.hidden = false;
+        field?.classList.add("field-invalid");
+        field?.focus();
+        card?.classList.remove("dialog-shake");
+        void card?.offsetWidth;
+        card?.classList.add("dialog-shake");
+        return;
+      }
+      finish(value);
+    });
+    field?.addEventListener("input", () => {
+      field.classList.remove("field-invalid");
+      if (errorNode) errorNode.hidden = true;
+    });
+    card?.addEventListener("keydown", (event) => {
+      if (event.key !== "Tab") return;
+      const focusable = [...card.querySelectorAll('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])')];
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); }
+    });
+    window.requestAnimationFrame(() => (field || document.getElementById("modernDialogConfirm"))?.focus());
+  });
+}
+
+function showConfirmDialog(options) {
+  return openModernDialog({ ...options, input: null, cancelValue: false });
+}
+
+function showPromptDialog(options) {
+  return openModernDialog({ ...options, cancelValue: null });
 }
 
 function showAuthMessage(message, isError = false) {
@@ -1226,7 +1383,16 @@ function renderService() {
     const record = state.incentives.find((item) => item.id === button.dataset.id);
     if (!record) return;
     const employee = employeesById.get(record.employeeId);
-    if (!window.confirm(`ต้องการลบ Service Incentive ของ ${employee?.fullName || record.employeeId} เดือน ${record.yearMonth} ใช่หรือไม่?`)) return;
+    if (!await showConfirmDialog({
+      title: "ลบ Service Incentive",
+      message: "รายการที่ลบจะไม่สามารถเรียกคืนจากหน้าเว็บได้",
+      tone: "danger",
+      confirmText: "ลบรายการ",
+      details: [
+        { icon: "user-round", label: "พนักงาน", value: employee?.fullName || record.employeeId },
+        { icon: "calendar-range", label: "เดือน", value: record.yearMonth },
+      ],
+    })) return;
     button.disabled = true;
     try {
       await window.EmployeeHubDatabase.deleteServiceIncentive(record.id);
@@ -1707,7 +1873,16 @@ async function syncPerformanceRows(rows) {
   const readyRows = rows.filter((row) => row.ready);
   if (!readyRows.length) return showToast("ไม่มีรายการพร้อมส่ง", "warning");
   const overwriteCount = readyRows.filter((row) => row.evaluation).length;
-  const confirmed = window.confirm(`กำลังส่งคะแนน ${readyRows.length} คน${overwriteCount ? ` และอัปเดตข้อมูลเดิม ${overwriteCount} คน` : ""}\n\nระบบจะไม่เปลี่ยนคะแนนการเคารพกฎระเบียบบริษัท ยืนยันดำเนินการหรือไม่?`);
+  const confirmed = await showConfirmDialog({
+    title: "ส่งคะแนนไป Performance Summary",
+    message: "ระบบจะไม่เปลี่ยนคะแนนการเคารพกฎระเบียบบริษัท",
+    tone: "info",
+    confirmText: "ยืนยันส่งคะแนน",
+    details: [
+      { icon: "users-round", label: "รายการพร้อมส่ง", value: `${readyRows.length} คน` },
+      { icon: "refresh-cw", label: "อัปเดตข้อมูลเดิม", value: `${overwriteCount} คน` },
+    ],
+  });
   if (!confirmed) return;
   setBusy(true, "กำลังส่งคะแนนไป Performance Summary");
   let success = 0;
@@ -1863,7 +2038,16 @@ async function syncPerformanceIncentiveRows(rows) {
   const readyRows = rows.filter((row) => row.ready);
   if (!readyRows.length) return showToast("ไม่มีรายการเงินประเมินพร้อมส่ง", "warning");
   const updateCount = readyRows.filter((row) => row.incentive).length;
-  const confirmed = window.confirm(`กำลังส่งเงินประเมิน ${readyRows.length} คน${updateCount ? ` และอัปเดตรายการเดิม ${updateCount} คน` : ""}\n\nระบบจะเปลี่ยนเฉพาะช่องประเมิน ยืนยันดำเนินการหรือไม่?`);
+  const confirmed = await showConfirmDialog({
+    title: "ส่งเงินประเมินไป Service Incentive",
+    message: "ระบบจะเปลี่ยนเฉพาะช่องประเมิน และเก็บยอดขายกับยอดเวลาเดิมไว้",
+    tone: "info",
+    confirmText: "ยืนยันส่งเงิน",
+    details: [
+      { icon: "users-round", label: "รายการพร้อมส่ง", value: `${readyRows.length} คน` },
+      { icon: "refresh-cw", label: "อัปเดตรายการเดิม", value: `${updateCount} คน` },
+    ],
+  });
   if (!confirmed) return;
   setBusy(true, "กำลังส่งเงินประเมินไป Service Incentive");
   let success = 0;
@@ -2136,7 +2320,21 @@ function bindPerformanceTabEvents() {
   document.getElementById("exportPerformanceCsv")?.addEventListener("click", exportPerformanceCsv);
   document.getElementById("addPerformanceYear")?.addEventListener("click", async () => {
     const suggested = Math.max(...(state.performanceSettings.years || [state.performanceYear])) + 1;
-    const value = window.prompt("ระบุปีประเมินใหม่ (พ.ศ.)", String(suggested));
+    const value = await showPromptDialog({
+      title: "เพิ่มปีประเมินใหม่",
+      message: "ปีใหม่จะถูกเพิ่มใน Performance Summary โดยไม่ลบข้อมูลปีเดิม",
+      tone: "info",
+      confirmText: "เพิ่มปีประเมิน",
+      input: {
+        label: "ปีประเมิน (พ.ศ.)",
+        type: "number",
+        defaultValue: String(suggested),
+        min: 2500,
+        max: 2700,
+        required: true,
+        helper: "ตัวอย่าง 2569",
+      },
+    });
     if (!value) return;
     try { const result = await window.EmployeeHubDatabase.addPerformanceYear(value); state.performanceSettings = { ...state.performanceSettings, ...result }; state.performanceYear = Number(result.activeYear); state.performanceDataKey = ""; await refreshPerformanceData({ force: true }); showToast("เพิ่มปีประเมินเรียบร้อยแล้ว"); } catch (error) { showToast(error.message, "error"); }
   });
@@ -2493,7 +2691,16 @@ function bindAttendanceEvents() {
   }));
   els.workdayView.querySelectorAll(".delete-attendance").forEach((button) => button.addEventListener("click", async () => {
     const employee = employeeMap().get(button.dataset.employeeId);
-    if (!window.confirm(`ต้องการลบเวลาสายของ ${employee?.fullName || button.dataset.employeeId} เดือน ${state.workdayMonth} ใช่หรือไม่?`)) return;
+    if (!await showConfirmDialog({
+      title: "ลบข้อมูลเวลาสาย",
+      message: "คะแนนความตรงต่อเวลาของเดือนนี้อาจเปลี่ยนหลังลบข้อมูล",
+      tone: "danger",
+      confirmText: "ลบข้อมูล",
+      details: [
+        { icon: "user-round", label: "พนักงาน", value: employee?.fullName || button.dataset.employeeId },
+        { icon: "calendar-range", label: "เดือน", value: state.workdayMonth },
+      ],
+    })) return;
     button.disabled = true;
     try {
       await window.EmployeeHubDatabase.deleteAttendanceMonthly(button.dataset.id);
@@ -2550,7 +2757,17 @@ function bindLeaveEvents() {
   els.workdayView.querySelectorAll(".delete-leave").forEach((button) => button.addEventListener("click", async () => {
     const record = state.leaveRecords.find((row) => row.id === button.dataset.id);
     const employee = employeeMap().get(record?.employeeId);
-    if (!record || !window.confirm(`ต้องการลบ ${leaveTypeLabel(record.leaveType)} ของ ${employee?.fullName || record.employeeId} วันที่ ${formatDateOnly(record.date)} ใช่หรือไม่?`)) return;
+    if (!record) return;
+    if (!await showConfirmDialog({
+      title: "ลบข้อมูลวันลา",
+      message: "ยอดวันลาและรายงานประจำปีจะถูกคำนวณใหม่",
+      tone: "danger",
+      confirmText: "ลบวันลา",
+      details: [
+        { icon: "user-round", label: "พนักงาน", value: employee?.fullName || record.employeeId },
+        { icon: "calendar-days", label: "ประเภทและวันที่", value: `${leaveTypeLabel(record.leaveType)} · ${formatDateOnly(record.date)}` },
+      ],
+    })) return;
     button.disabled = true;
     try {
       await window.EmployeeHubDatabase.deleteLeaveRecord(record.id);
@@ -3098,7 +3315,16 @@ function bindMonthlyEntryEvents() {
     submit.disabled = true;
     try {
       if (employeeId === MONTHLY_ALL_EMPLOYEES_ID) {
-        if (!window.confirm(`ยืนยันบันทึกข้อมูลวันที่ ${formatDateOnly(date)} ให้พนักงานใช้งานทุกคน ${activeEmployees().length} คนหรือไม่?`)) return;
+        if (!await showConfirmDialog({
+          title: "บันทึกให้พนักงานทุกคน",
+          message: "ระบบจะเขียนเฉพาะข้อมูลที่เปลี่ยน และข้ามรายการที่เหมือนเดิม",
+          tone: "warning",
+          confirmText: "บันทึกทั้งหมด",
+          details: [
+            { icon: "calendar-days", label: "วันที่", value: formatDateOnly(date) },
+            { icon: "users-round", label: "พนักงานใช้งาน", value: `${activeEmployees().length} คน` },
+          ],
+        })) return;
         const result = await window.EmployeeHubDatabase.saveDailyPerformanceEntriesBatch({
           employeeIds: sortedActiveEmployees().map((employee) => employee.id), date, status, note, scores,
         });
@@ -3142,7 +3368,17 @@ function bindMonthlyHistoryEvents() {
   els.monthlyView.querySelectorAll(".delete-monthly-entry").forEach((button) => button.addEventListener("click", async () => {
     const entry = monthlyEntryById(button.dataset.id);
     const employee = employeeMap().get(entry?.employeeId);
-    if (!entry || !window.confirm(`ต้องการลบข้อมูล ${employee?.fullName || entry.employeeId} วันที่ ${formatDateOnly(entry.date)} ใช่หรือไม่?`)) return;
+    if (!entry) return;
+    if (!await showConfirmDialog({
+      title: "ลบข้อมูล Monthly Performance",
+      message: "คะแนนสรุปและ Incentive ของวันที่นี้จะถูกคำนวณใหม่",
+      tone: "danger",
+      confirmText: "ลบข้อมูลรายวัน",
+      details: [
+        { icon: "user-round", label: "พนักงาน", value: employee?.fullName || entry.employeeId },
+        { icon: "calendar-days", label: "วันที่", value: formatDateOnly(entry.date) },
+      ],
+    })) return;
     button.disabled = true;
     try {
       await window.EmployeeHubDatabase.deleteDailyPerformanceEntry(entry.id);
@@ -3168,7 +3404,13 @@ function bindMonthlyOverrideEvents() {
     } catch (error) { showToast(error.message, "error"); }
   }));
   els.monthlyView.querySelectorAll(".clear-monthly-override").forEach((button) => button.addEventListener("click", async () => {
-    if (!window.confirm("ยืนยันล้าง Override และกลับไปใช้จำนวนวันทำงาน Auto หรือไม่?")) return;
+    if (!await showConfirmDialog({
+      title: "กลับไปใช้วันทำงาน Auto",
+      message: "ค่า Override ที่กรอกไว้จะถูกลบ และระบบจะคำนวณจำนวนวันทำงานอัตโนมัติอีกครั้ง",
+      tone: "warning",
+      confirmText: "ล้าง Override",
+      details: [{ icon: "rotate-ccw", label: "ผลลัพธ์", value: "ใช้จำนวนวันทำงาน Auto" }],
+    })) return;
     button.disabled = true;
     try {
       await window.EmployeeHubDatabase.deleteMonthlyPerformanceOverride(button.dataset.id);
@@ -3193,11 +3435,39 @@ async function changeMonthlyStatus(nextStatus) {
   let reason = "";
   if (nextStatus === "CLOSED") {
     if (!validation.passed) { showMonthlyValidationModal(validation); return showToast("ยังมีข้อผิดพลาด ไม่สามารถปิดเดือนได้", "warning"); }
-    if (!window.confirm(`ยืนยันปิดเดือน ${state.monthlyMonth} หรือไม่? หลังปิดแล้วจะไม่สามารถแก้ข้อมูลจนกว่าจะเปิดเดือนกลับมา`)) return;
+    if (!await showConfirmDialog({
+      title: `ปิดเดือน ${state.monthlyMonth}`,
+      message: "หลังปิดเดือนจะไม่สามารถแก้ข้อมูล Monthly Performance ได้ จนกว่าจะเปิดเดือนกลับมา",
+      tone: "warning",
+      confirmText: "ยืนยันปิดเดือน",
+      details: [
+        { icon: "circle-check", label: "ผลตรวจข้อมูล", value: "ผ่าน" },
+        { icon: "lock-keyhole", label: "สถานะใหม่", value: "CLOSED" },
+      ],
+    })) return;
   } else if (nextStatus === "REVIEW") {
-    if (!window.confirm(`ส่งเดือน ${state.monthlyMonth} เข้าสถานะรอตรวจสอบหรือไม่?`)) return;
+    if (!await showConfirmDialog({
+      title: `ส่งเดือน ${state.monthlyMonth} เข้าตรวจสอบ`,
+      message: "ข้อมูลจะเปลี่ยนเป็นสถานะ Review เพื่อเตรียมตรวจความครบถ้วนก่อนปิดเดือน",
+      tone: "info",
+      confirmText: "ส่งเข้าตรวจสอบ",
+      details: [{ icon: "scan-search", label: "สถานะใหม่", value: "REVIEW" }],
+    })) return;
   } else if (nextStatus === "OPEN") {
-    reason = window.prompt("กรุณาระบุเหตุผลในการเปิดเดือนกลับมาแก้ไข:") || "";
+    reason = await showPromptDialog({
+      title: `เปิดเดือน ${state.monthlyMonth} กลับมาแก้ไข`,
+      message: "เหตุผลจะถูกบันทึกไว้ในประวัติการเปลี่ยนแปลง",
+      tone: "warning",
+      confirmText: "เปิดเดือนกลับมา",
+      input: {
+        label: "เหตุผลในการเปิดเดือน",
+        multiline: true,
+        rows: 4,
+        required: true,
+        minLength: 3,
+        placeholder: "ระบุเหตุผลที่ต้องแก้ไขข้อมูลเดือนนี้",
+      },
+    }) || "";
     if (!reason.trim()) return showToast("ต้องระบุเหตุผลในการเปิดเดือน", "warning");
   }
   try {
@@ -3449,13 +3719,25 @@ async function finalizeClosingMonth(summary = buildClosingSummary()) {
     const details = summary.finalizeBlockers.slice(0, 4).join(" · ");
     return showToast(`ยังรับรองรอบเดือนไม่ได้${details ? `: ${details}` : ""}`, "warning", 8000);
   }
-  const note = window.prompt(`หมายเหตุการรับรองรอบ ${state.closingMonth} (เว้นว่างได้):`, "");
+  const note = await showPromptDialog({
+    title: `รับรองและล็อกรอบ ${state.closingMonth}`,
+    message: "หลังล็อก ระบบจะป้องกันการแก้ไขทุกโมดูลของเดือนนี้ จนกว่าจะเปิดรอบกลับมาโดยระบุเหตุผล",
+    tone: "warning",
+    icon: "shield-check",
+    confirmText: "รับรองและล็อกรอบ",
+    details: [
+      { icon: "check-check", label: "ขั้นตอนตรวจสอบ", value: "ครบถ้วน" },
+      { icon: "lock-keyhole", label: "สถานะใหม่", value: "FINALIZED" },
+    ],
+    input: {
+      label: "หมายเหตุการรับรอง (ไม่บังคับ)",
+      multiline: true,
+      rows: 3,
+      maxLength: 500,
+      placeholder: "บันทึกหมายเหตุเพิ่มเติมสำหรับรอบนี้",
+    },
+  });
   if (note === null) return;
-  const confirmed = window.confirm(
-    `ยืนยันรับรองและล็อกรอบ ${state.closingMonth} หรือไม่?\n\n` +
-    "หลังล็อกแล้ว ระบบจะป้องกันการแก้ไข Workday, วันลา, Monthly Performance, Performance Summary และ Service Incentive ของเดือนนี้ จนกว่าจะเปิดรอบกลับมาโดยระบุเหตุผล"
-  );
-  if (!confirmed) return;
   setBusy(true, "กำลังรับรองและล็อกรอบเดือน");
   try {
     const closure = await window.EmployeeHubDatabase.finalizeMonthClosure({
@@ -3477,9 +3759,24 @@ async function finalizeClosingMonth(summary = buildClosingSummary()) {
 
 async function reopenClosingMonth(summary = buildClosingSummary()) {
   if (!summary?.finalized) return showToast("เดือนนี้ยังไม่ได้ล็อกรอบ", "warning");
-  const reason = window.prompt(`กรุณาระบุเหตุผลในการเปิดรอบ ${state.closingMonth} กลับมาแก้ไข:`) || "";
-  if (reason.trim().length < 5) return showToast("เหตุผลต้องมีอย่างน้อย 5 ตัวอักษร", "warning");
-  if (!window.confirm(`ยืนยันเปิดรอบ ${state.closingMonth} กลับมาแก้ไขหรือไม่? การดำเนินการนี้จะถูกบันทึกใน Audit Log`)) return;
+  const reason = await showPromptDialog({
+    title: `เปิดรอบ ${state.closingMonth} กลับมาแก้ไข`,
+    message: "การดำเนินการนี้จะถูกบันทึกใน Audit Log และปลดล็อกข้อมูลทุกโมดูลของเดือน",
+    tone: "warning",
+    icon: "lock-open",
+    confirmText: "เปิดรอบกลับมา",
+    details: [{ icon: "history", label: "การตรวจสอบ", value: "บันทึก Audit Log" }],
+    input: {
+      label: "เหตุผลในการเปิดรอบ",
+      multiline: true,
+      rows: 4,
+      required: true,
+      minLength: 5,
+      minLengthMessage: "เหตุผลต้องมีอย่างน้อย 5 ตัวอักษร",
+      placeholder: "อธิบายเหตุผลที่ต้องกลับมาแก้ไขข้อมูล",
+    },
+  }) || "";
+  if (!reason) return;
   setBusy(true, "กำลังเปิดรอบกลับมาแก้ไข");
   try {
     const closure = await window.EmployeeHubDatabase.reopenMonthClosure({
@@ -4252,7 +4549,17 @@ async function acceptProductionRelease() {
     showToast("รายการตรวจรับยังไม่ครบ", "warning");
     return;
   }
-  if (!window.confirm(`ยืนยันรับรอง ${APP_RELEASE.product} Production v${APP_RELEASE.version} หรือไม่?`)) return;
+  if (!await showConfirmDialog({
+    title: `รับรอง Production v${APP_RELEASE.version}`,
+    message: "การรับรองจะบันทึกผู้ดำเนินการ วันเวลา ผลตรวจอัตโนมัติ และรายการตรวจด้วยตนเอง",
+    tone: "success",
+    icon: "badge-check",
+    confirmText: "รับรอง Production",
+    details: [
+      { icon: "package-check", label: "ระบบ", value: APP_RELEASE.product },
+      { icon: "tag", label: "เวอร์ชัน", value: APP_RELEASE.version },
+    ],
+  })) return;
   state.releaseSaving = true;
   renderSystem();
   try {
@@ -4416,12 +4723,14 @@ function bindGlobalEvents() {
     }
   });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && els.modalRoot.innerHTML) els.modalRoot.innerHTML = "";
+    if (event.key === "Escape" && els.modalRoot.innerHTML) dismissActiveDialog();
   });
 }
 
 async function bootstrap() {
   cacheElements();
+  new MutationObserver(() => document.body.classList.toggle("modal-open", Boolean(els.modalRoot?.childElementCount)))
+    .observe(els.modalRoot, { childList: true });
   bindGlobalEvents();
   ensureIcons();
   if (!window.EmployeeHubDatabase?.isConfigured()) {
