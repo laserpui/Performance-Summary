@@ -2,10 +2,10 @@
 
 const APP_RELEASE = Object.freeze({
   product: "Employee Management Hub",
-  version: "1.0.4",
-  phase: "Popup UI Refresh",
-  releaseName: "Modern Popup Experience · Accessible Dialog System",
-  releasedAt: "2026-07-25",
+  version: "1.0.5",
+  phase: "Workday Leave Date Default",
+  releaseName: "Current Date Default · Leave Form",
+  releasedAt: "2026-07-27",
 });
 
 const RELEASE_MANUAL_CHECKS = Object.freeze([
@@ -239,6 +239,11 @@ function formatNumber(value, maximumFractionDigits = 1) {
 function currentYearMonth() {
   const now = new Date();
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function currentLocalDateInputValue() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
 
 function employeeMap() {
@@ -2561,7 +2566,7 @@ function renderLeaveSection() {
         <form id="leaveForm">
           <div class="form-grid">
             <div class="field"><label for="leaveEmployee">พนักงาน</label><select id="leaveEmployee" required><option value="">เลือกพนักงาน</option>${employees.map((employee) => `<option value="${escapeHtml(employee.id)}" ${(editing?.employeeId || "") === employee.id ? "selected" : ""}>${escapeHtml(`${employee.employeeCode} · ${employee.fullName}`)}</option>`).join("")}</select></div>
-            <div class="field"><label for="leaveDate">วันที่เริ่มลา</label><input id="leaveDate" type="date" required value="${escapeHtml(editing?.date || `${state.workdayYear}-01-01`)}" /></div>
+            <div class="field"><label for="leaveDate">วันที่เริ่มลา</label><input id="leaveDate" type="date" required value="${escapeHtml(editing?.date || currentLocalDateInputValue())}" /></div>
             <div class="field"><label for="leaveType">ประเภท</label><select id="leaveType" required>${Object.entries(LEAVE_TYPE_LABELS).map(([type, label]) => `<option value="${type}" ${editingType === type ? "selected" : ""}>${label}</option>`).join("")}</select></div>
             <div class="field"><label for="leaveDays">จำนวนวัน</label><input id="leaveDays" type="number" min="0.5" max="365" step="0.5" required value="${editing?.days ?? 1}" /></div>
             <div class="field field-full"><label for="leaveNote">หมายเหตุ</label><textarea id="leaveNote" maxlength="1000" placeholder="ระบุรายละเอียดของลาอื่นๆ">${escapeHtml(editing?.note || "")}</textarea></div>
