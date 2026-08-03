@@ -1,11 +1,11 @@
 "use strict";
 
-const APP_RELEASE_VERSION = String(window.EMPLOYEE_HUB_FIREBASE_CONFIG?.releaseVersion || '1.0.9');
+const APP_RELEASE_VERSION = String(window.EMPLOYEE_HUB_FIREBASE_CONFIG?.releaseVersion || '1.0.10');
 const APP_RELEASE = Object.freeze({
   product: "Employee Management Hub",
   version: APP_RELEASE_VERSION,
   phase: 'Production Hardening',
-  releaseName: 'International Gregorian Date Controls',
+  releaseName: 'One-row Workday & Leave Export',
   releasedAt: "2026-08-03",
 });
 
@@ -2851,25 +2851,34 @@ function downloadCsv(rows, filename) {
 }
 
 function exportWorkdayCsv() {
-  const employeesById = employeeMap();
   const applyLeaveFilters = state.workdayTab === "leave";
   const employeeFilter = applyLeaveFilters ? state.leaveEmployeeId : "";
-  const leaveTypeFilter = applyLeaveFilters ? state.leaveTypeFilter : "";
   const attendanceRecords = state.attendanceMonthly.filter((record) => record.yearMonth === state.workdayMonth);
   const recordsByEmployee = new Map(attendanceRecords.map((record) => [record.employeeId, record]));
   const employees = sortedActiveEmployees().filter((employee) => !employeeFilter || employee.id === employeeFilter);
   const leaveRecords = state.leaveRecords.filter((record) => (record.yearMonth || String(record.date || "").slice(0, 7)) === state.workdayMonth
-    && (!employeeFilter || record.employeeId === employeeFilter)
-    && (!leaveTypeFilter || normalizedLeaveType(record.leaveType) === leaveTypeFilter));
+    && (!employeeFilter || record.employeeId === employeeFilter));
   if (!employees.length && !leaveRecords.length) return showToast("ไม่มีข้อมูลเวลาสายหรือวันลาสำหรับ Export", "warning");
-  const rows = [["ประเภทข้อมูล", "เดือน", "วันที่", "รหัสพนักงาน", "ชื่อพนักงาน", "นาทีสาย", "คะแนนเวลา", "ประเภทวันลา", "จำนวนวันลา", "ไม่รวมวันหยุด", "หมายเหตุ", "สถานะข้อมูล", "แก้ไขล่าสุด"]];
+  const leaveByEmployee = new Map();
+  leaveRecords.forEach((record) => {
+    if (!leaveByEmployee.has(record.employeeId)) {
+      leaveByEmployee.set(record.employeeId, { sick: 0, personal: 0, vacation: 0, other: 0, total: 0, notes: new Set(), updatedAt: "" });
+    }
+    const summary = leaveByEmployee.get(record.employeeId);
+    const leaveType = ["sick", "personal", "vacation"].includes(normalizedLeaveType(record.leaveType))
+      ? normalizedLeaveType(record.leaveType)
+      : "other";
+    const days = Number(record.days) || 0;
+    summary[leaveType] += days;
+    summary.total += days;
+    if (String(record.note || "").trim()) summary.notes.add(String(record.note).trim());
+    if (String(record.updatedAt || "") > summary.updatedAt) summary.updatedAt = String(record.updatedAt);
+  });
+  const rows = [["เดือน", "รหัสพนักงาน", "ชื่อพนักงาน", "นาทีสาย", "คะแนนเวลา", "ลาป่วย (วัน)", "ลากิจ (วัน)", "ลาพักร้อน (วัน)", "ลาอื่นๆ (วัน)", "วันลารวม", "หมายเหตุวันลา", "สถานะข้อมูลเวลาสาย", "แก้ไขล่าสุดเวลาสาย", "แก้ไขล่าสุดวันลา"]];
   employees.forEach((employee) => {
     const record = recordsByEmployee.get(employee.id);
-    rows.push(["เวลาสาย", state.workdayMonth, "", employee.employeeCode, employee.fullName, record?.lateMinutes ?? "", record?.lateScore ?? "", "", "", "", "", record ? "บันทึกแล้ว" : "ยังไม่มีข้อมูล", record?.updatedAt || ""]);
-  });
-  leaveRecords.forEach((record) => {
-    const employee = employeesById.get(record.employeeId);
-    rows.push(["วันลา", state.workdayMonth, record.date, employee?.employeeCode || "", employee?.fullName || record.employeeId, "", "", leaveTypeLabel(record.leaveType), record.days, record.excludeHolidays ? "ใช่" : "ไม่", record.note, "บันทึกแล้ว", record.updatedAt]);
+    const leave = leaveByEmployee.get(employee.id) || { sick: 0, personal: 0, vacation: 0, other: 0, total: 0, notes: new Set(), updatedAt: "" };
+    rows.push([state.workdayMonth, employee.employeeCode, employee.fullName, record?.lateMinutes ?? "", record?.lateScore ?? "", leave.sick, leave.personal, leave.vacation, leave.other, leave.total, [...leave.notes].join(" | "), record ? "บันทึกแล้ว" : "ยังไม่มีข้อมูล", record?.updatedAt || "", leave.updatedAt]);
   });
   downloadCsv(rows, `workday-attendance-leave-${state.workdayMonth}.csv`);
 }
