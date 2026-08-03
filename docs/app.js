@@ -1,11 +1,11 @@
 "use strict";
 
-const APP_RELEASE_VERSION = String(window.EMPLOYEE_HUB_FIREBASE_CONFIG?.releaseVersion || '1.0.7');
+const APP_RELEASE_VERSION = String(window.EMPLOYEE_HUB_FIREBASE_CONFIG?.releaseVersion || '1.0.9');
 const APP_RELEASE = Object.freeze({
   product: "Employee Management Hub",
   version: APP_RELEASE_VERSION,
   phase: 'Production Hardening',
-  releaseName: 'Firestore Integrity · Atomic Writes · Faster Loading',
+  releaseName: 'International Gregorian Date Controls',
   releasedAt: "2026-08-03",
 });
 
@@ -846,7 +846,7 @@ function renderExecutive() {
     <div class="page-grid">
       <article class="panel executive-hero">
         <div class="panel-head"><div><p class="eyebrow">EXECUTIVE CONTROL CENTER</p><h2>Executive Dashboard</h2><p>ภาพรวมผลการทำงาน เวลา เงินพิเศษ และรายการติดตามประจำเดือน</p></div>${summary ? executiveClosureBadge(summary.closureStatus) : ""}</div>
-        <div class="closing-toolbar"><div class="field compact-field"><label for="executiveMonthPicker">เดือนรายงาน</label><input id="executiveMonthPicker" type="month" value="${escapeHtml(state.executiveMonth)}" /></div><div class="panel-actions"><button id="refreshExecutiveButton" class="button button-secondary" type="button"><i data-lucide="refresh-cw"></i>ตรวจใหม่</button><button id="exportExecutiveButton" class="button button-primary" type="button" ${summary ? "" : "disabled"}><i data-lucide="file-down"></i>Export Summary</button></div></div>
+        <div class="closing-toolbar"><div class="field compact-field"><label for="executiveMonthPicker">เดือน/ปีรายงาน (ค.ศ.)</label><input id="executiveMonthPicker" type="month" lang="en-GB" data-calendar="gregorian" value="${escapeHtml(state.executiveMonth)}" /></div><div class="panel-actions"><button id="refreshExecutiveButton" class="button button-secondary" type="button"><i data-lucide="refresh-cw"></i>ตรวจใหม่</button><button id="exportExecutiveButton" class="button button-primary" type="button" ${summary ? "" : "disabled"}><i data-lucide="file-down"></i>Export Summary</button></div></div>
       </article>
       ${summary ? `
       <div class="kpi-grid">
@@ -942,7 +942,7 @@ function annualYearOptions() {
     ...state.incentives.map((record) => Number(String(record.yearMonth || "").slice(0, 4)) + 543),
   ].filter((year) => Number.isFinite(year) && year >= 2500 && year <= 3000));
   years.add(Number(state.annualYear));
-  return [...years].sort((a, b) => b - a).map((year) => `<option value="${year}" ${year === Number(state.annualYear) ? "selected" : ""}>${year}</option>`).join("");
+  return [...years].sort((a, b) => b - a).map((year) => `<option value="${year}" ${year === Number(state.annualYear) ? "selected" : ""}>${year - 543}</option>`).join("");
 }
 
 function annualEmployeeOptions() {
@@ -1118,7 +1118,7 @@ function renderAnnualReport() {
     <div class="page-grid annual-report-page">
       <article class="panel annual-hero">
         <div class="panel-head"><div><p class="eyebrow">ANNUAL PEOPLE REPORT</p><h2>รายงานประจำปี</h2><p>สรุป Performance, Service Incentive, เวลาสาย วันลา และสถานะรับรองรอบตลอดทั้งปี</p></div><span class="badge badge-ready">Phase 8</span></div>
-        <div class="annual-toolbar annual-no-print"><div class="field compact-field"><label for="annualYearPicker">ปีรายงาน</label><select id="annualYearPicker">${annualYearOptions()}</select></div><div class="field compact-field annual-employee-filter"><label for="annualEmployeePicker">พนักงาน</label><select id="annualEmployeePicker">${annualEmployeeOptions()}</select></div><div class="panel-actions"><button id="refreshAnnualButton" class="button button-secondary" type="button"><i data-lucide="refresh-cw"></i>ตรวจใหม่</button><button id="exportAnnualButton" class="button button-primary" type="button" ${summary ? "" : "disabled"}><i data-lucide="file-down"></i>Export CSV</button><button id="printAnnualButton" class="button button-ghost" type="button" ${summary ? "" : "disabled"}><i data-lucide="printer"></i>พิมพ์</button></div></div>
+        <div class="annual-toolbar annual-no-print"><div class="field compact-field"><label for="annualYearPicker">ปีรายงาน (ค.ศ.)</label><select id="annualYearPicker">${annualYearOptions()}</select></div><div class="field compact-field annual-employee-filter"><label for="annualEmployeePicker">พนักงาน</label><select id="annualEmployeePicker">${annualEmployeeOptions()}</select></div><div class="panel-actions"><button id="refreshAnnualButton" class="button button-secondary" type="button"><i data-lucide="refresh-cw"></i>ตรวจใหม่</button><button id="exportAnnualButton" class="button button-primary" type="button" ${summary ? "" : "disabled"}><i data-lucide="file-down"></i>Export CSV</button><button id="printAnnualButton" class="button button-ghost" type="button" ${summary ? "" : "disabled"}><i data-lucide="printer"></i>พิมพ์</button></div></div>
         ${legacy ? `<div class="notice notice-info"><i data-lucide="archive"></i><div><strong>ข้อมูล Performance ปี 2568</strong><br>ใช้คะแนนเฉลี่ยรายปีจากไฟล์ต้นฉบับ ส่วนข้อมูล Incentive, เวลา และวันลาแสดงตามรายการที่มีอยู่ใน Firebase</div></div>` : ""}
       </article>
       ${summary ? `<div class="kpi-grid annual-kpi-grid">
@@ -1234,7 +1234,7 @@ function openEmployeeModal(employee = null) {
         <form id="employeeForm">
           <div class="form-grid">
             <div class="field"><label for="employeeCode">รหัสพนักงาน</label><input id="employeeCode" maxlength="20" value="${escapeHtml(employee?.employeeCode || nextEmployeeCode())}" placeholder="EMP013" /></div>
-            <div class="field"><label for="employeeStartDate">วันที่เริ่มงาน</label><input id="employeeStartDate" type="date" value="${escapeHtml(employee?.startDate || "")}" /></div>
+            <div class="field"><label for="employeeStartDate">วันที่เริ่มงาน (วัน/เดือน/ปี ค.ศ.)</label><input id="employeeStartDate" type="date" lang="en-GB" data-calendar="gregorian" value="${escapeHtml(employee?.startDate || "")}" /></div>
             <div class="field field-full"><label for="employeeFullName">ชื่อพนักงาน</label><input id="employeeFullName" maxlength="100" required value="${escapeHtml(employee?.fullName || "")}" /></div>
             <div class="field"><label for="employeeSortOrder">ลำดับแสดงผล</label><input id="employeeSortOrder" type="number" min="0" value="${employee?.sortOrder || nextEmployeeSortOrder()}" /></div>
             <div class="field"><label for="employeeActive">สถานะ</label><select id="employeeActive"><option value="true" ${employee?.isActive !== false ? "selected" : ""}>ใช้งาน</option><option value="false" ${employee?.isActive === false ? "selected" : ""}>ปิดใช้งาน</option></select></div>
@@ -1300,7 +1300,7 @@ function renderService() {
           <div class="panel-head"><div><h2>บันทึก Service Incentive</h2><p>หนึ่งพนักงานต่อหนึ่งเดือน ระบบจะอัปเดตรายการเดิมอัตโนมัติ</p></div></div>
           <form id="serviceForm">
             <div class="form-grid">
-              <div class="field"><label for="serviceMonth">เดือน</label><input id="serviceMonth" type="month" required value="${escapeHtml(state.serviceMonth)}" /></div>
+              <div class="field"><label for="serviceMonth">เดือน/ปี (ค.ศ.)</label><input id="serviceMonth" type="month" lang="en-GB" data-calendar="gregorian" required value="${escapeHtml(state.serviceMonth)}" /></div>
               <div class="field"><label for="serviceEmployee">พนักงาน</label><select id="serviceEmployee" required><option value="">เลือกพนักงาน</option>${activeEmployees().map((employee) => `<option value="${escapeHtml(employee.id)}" ${state.serviceEmployeeId === employee.id ? "selected" : ""}>${escapeHtml(employee.employeeCode ? `${employee.employeeCode} · ${employee.fullName}` : employee.fullName)}</option>`).join("")}</select></div>
               <div class="field"><label for="salesAmount">ขายของ</label><input id="salesAmount" type="number" step="0.01" value="${selectedRecord?.salesAmount ?? 0}" /></div>
               <div class="field"><label for="evaluationAmount">ประเมิน</label><input id="evaluationAmount" type="number" step="0.01" value="${selectedRecord?.evaluationAmount ?? 0}" /></div>
@@ -1509,7 +1509,7 @@ function legacyAnnualPerformanceRows() {
 
 function performanceYearOptions() {
   const years = [...new Set([PERFORMANCE_LEGACY_ANNUAL_YEAR, ...(state.performanceSettings.years || []), ...(state.evaluationSummary.years || []), Number(state.performanceYear)])].filter(Number.isFinite).sort((a, b) => b - a);
-  return years.map((year) => `<option value="${year}" ${year === Number(state.performanceYear) ? "selected" : ""}>${year}</option>`).join("");
+  return years.map((year) => `<option value="${year}" ${year === Number(state.performanceYear) ? "selected" : ""}>${year - 543}</option>`).join("");
 }
 
 function performanceMonthOptions() {
@@ -1584,7 +1584,7 @@ function renderPerformance() {
       <article class="panel performance-hero">
         <div class="panel-head"><div><h2>Performance Summary</h2><p>${legacyAnnual ? "ข้อมูลปี 2568 เป็นคะแนนสรุปรายปีจากไฟล์ต้นฉบับ และเปิดดูแบบ Read-only" : "บันทึกและวิเคราะห์คะแนน KPI รายเดือนจากฐานข้อมูล Firebase เดิม"}</p></div><span class="badge badge-ready">Phase 6.2</span></div>
         <div class="performance-toolbar">
-          <div class="field compact-field"><label for="performanceYearPicker">ปีประเมิน</label><select id="performanceYearPicker">${performanceYearOptions()}</select></div>
+          <div class="field compact-field"><label for="performanceYearPicker">ปีประเมิน (ค.ศ.)</label><select id="performanceYearPicker">${performanceYearOptions()}</select></div>
           <div class="field compact-field"><label for="performanceMonthPicker">${legacyAnnual ? "รูปแบบข้อมูล" : "เดือน"}</label><select id="performanceMonthPicker" ${legacyAnnual ? "disabled" : ""}>${legacyAnnual ? '<option value="annual">สรุปรายปี</option>' : performanceMonthOptions()}</select></div>
         </div>
         <div class="tab-list" role="tablist" aria-label="Performance Summary">
@@ -2182,7 +2182,7 @@ function renderPerformanceReports() {
   return `
     <div class="split-grid">
       <article class="panel"><div class="panel-head"><div><h2>ส่งออกรายงาน</h2><p>ข้อมูลคะแนนครบ 6 หัวข้อ พร้อม GPA และคะแนนรวม</p></div></div><div class="kpi-grid compact-kpi-grid"><article class="kpi-card"><div class="kpi-head"><span>รายการ</span><span class="kpi-icon"><i data-lucide="database"></i></span></div><div class="kpi-value">${records.length}</div></article><article class="kpi-card"><div class="kpi-head"><span>พนักงาน</span><span class="kpi-icon"><i data-lucide="users"></i></span></div><div class="kpi-value">${evaluatedEmployees}</div></article></div><div class="form-actions"><button id="exportPerformanceCsv" class="button button-primary" type="button"><i data-lucide="file-down"></i>Export CSV ปี ${state.performanceYear}</button></div></article>
-      <article class="panel"><div class="panel-head"><div><h2>เริ่มปีประเมินใหม่</h2><p>เพิ่มปีโดยไม่ลบข้อมูลปีเดิม</p></div></div><div class="notice notice-info"><i data-lucide="info"></i><div>ปีประเมินใช้พุทธศักราช เช่น 2570</div></div><div class="form-actions"><button id="addPerformanceYear" class="button button-secondary" type="button"><i data-lucide="calendar-plus"></i>เพิ่มปีประเมิน</button></div></article>
+      <article class="panel"><div class="panel-head"><div><h2>เริ่มปีประเมินใหม่</h2><p>เพิ่มปีโดยไม่ลบข้อมูลปีเดิม</p></div></div><div class="notice notice-info"><i data-lucide="info"></i><div>ปีประเมินใช้คริสต์ศักราช เช่น 2027</div></div><div class="form-actions"><button id="addPerformanceYear" class="button button-secondary" type="button"><i data-lucide="calendar-plus"></i>เพิ่มปีประเมิน</button></div></article>
     </div>`;
 }
 
@@ -2251,7 +2251,7 @@ function renderEmployee360() {
   return `
     <article class="panel">
       <div class="panel-head"><div><h2>รายงานรวมพนักงาน 360°</h2><p>ข้อมูลจากทุกโมดูลในเดือนเดียวกัน</p></div><button id="printEmployee360" class="button button-secondary button-small" type="button"><i data-lucide="printer"></i>พิมพ์</button></div>
-      <div class="form-grid employee360-controls"><div class="field"><label for="employee360Month">เดือน</label><input id="employee360Month" type="month" value="${escapeHtml(state.employee360Month)}" /></div><div class="field"><label for="employee360Employee">พนักงาน</label><select id="employee360Employee">${employees.map((row) => `<option value="${escapeHtml(row.id)}" ${row.id === state.employee360EmployeeId ? "selected" : ""}>${escapeHtml(`${row.employeeCode} · ${row.fullName}`)}</option>`).join("")}</select></div></div>
+      <div class="form-grid employee360-controls"><div class="field"><label for="employee360Month">เดือน/ปี (ค.ศ.)</label><input id="employee360Month" type="month" lang="en-GB" data-calendar="gregorian" value="${escapeHtml(state.employee360Month)}" /></div><div class="field"><label for="employee360Employee">พนักงาน</label><select id="employee360Employee">${employees.map((row) => `<option value="${escapeHtml(row.id)}" ${row.id === state.employee360EmployeeId ? "selected" : ""}>${escapeHtml(`${row.employeeCode} · ${row.fullName}`)}</option>`).join("")}</select></div></div>
       ${state.employee360Loading ? `<div class="loading-skeleton"></div>` : `<div id="employee360Report" class="employee360-report"><div class="employee360-head"><div><p class="eyebrow">EMPLOYEE 360° REPORT</p><h2>${escapeHtml(employee?.fullName || "เลือกพนักงาน")}</h2><span>${escapeHtml(employee?.employeeCode || "")} · เดือน ${escapeHtml(state.employee360Month)}</span></div></div><div class="kpi-grid"><article class="kpi-card"><div class="kpi-head"><span>Performance Summary</span><span class="kpi-icon"><i data-lucide="chart-no-axes-combined"></i></span></div><div class="kpi-value">${performance ? formatNumber(performance.percentage, 1) : "-"}</div><div class="kpi-note">${performance ? performanceResultMeta(performance.percentage).label : (evaluation?.disciplinePending ? "รอกรอกกฎระเบียบ" : "ยังไม่มีข้อมูล")}</div></article><article class="kpi-card"><div class="kpi-head"><span>Monthly Performance</span><span class="kpi-icon"><i data-lucide="clipboard-check"></i></span></div><div class="kpi-value">${monthly ? formatNumber(monthly.percentage, 1) : "-"}</div><div class="kpi-note">${monthly ? `${monthly.actualWorkDays} วันทำงาน` : "ยังไม่มีข้อมูล"}</div></article><article class="kpi-card"><div class="kpi-head"><span>คะแนนเวลา</span><span class="kpi-icon"><i data-lucide="clock-3"></i></span></div><div class="kpi-value">${attendance ? attendance.lateScore : "-"}</div><div class="kpi-note">${attendance ? `${attendance.lateMinutes} นาทีสาย` : "ยังไม่มีข้อมูล"}</div></article><article class="kpi-card"><div class="kpi-head"><span>วันลา</span><span class="kpi-icon"><i data-lucide="calendar-off"></i></span></div><div class="kpi-value">${formatNumber(leaveDays, 1)}</div><div class="kpi-note">รวมทุกประเภทในเดือน</div></article><article class="kpi-card"><div class="kpi-head"><span>Service Incentive</span><span class="kpi-icon"><i data-lucide="badge-dollar-sign"></i></span></div><div class="kpi-value ${incentive?.totalAmount < 0 ? "negative" : ""}">${incentive ? formatMoney(incentive.totalAmount) : "-"}</div><div class="kpi-note">ขาย ${incentive ? formatMoney(incentive.salesAmount) : "-"} · ประเมิน ${incentive ? formatMoney(incentive.evaluationAmount) : "-"} · เวลา ${incentive ? formatMoney(incentive.timeAmount) : "-"}</div></article></div></div>`}
     </article>`;
 }
@@ -2326,24 +2326,24 @@ function bindPerformanceTabEvents() {
   document.querySelectorAll(".performance-edit-cell").forEach((button) => button.addEventListener("click", () => { state.performanceEmployeeId = button.dataset.employeeId; state.performanceMonth = Number(button.dataset.month); state.performanceTab = "entry"; state.performanceManualOverride = false; renderPerformance(); }));
   document.getElementById("exportPerformanceCsv")?.addEventListener("click", exportPerformanceCsv);
   document.getElementById("addPerformanceYear")?.addEventListener("click", async () => {
-    const suggested = Math.max(...(state.performanceSettings.years || [state.performanceYear])) + 1;
+    const suggested = Math.max(...(state.performanceSettings.years || [state.performanceYear])) + 1 - 543;
     const value = await showPromptDialog({
       title: "เพิ่มปีประเมินใหม่",
       message: "ปีใหม่จะถูกเพิ่มใน Performance Summary โดยไม่ลบข้อมูลปีเดิม",
       tone: "info",
       confirmText: "เพิ่มปีประเมิน",
       input: {
-        label: "ปีประเมิน (พ.ศ.)",
+        label: "ปีประเมิน (ค.ศ.)",
         type: "number",
         defaultValue: String(suggested),
-        min: 2500,
-        max: 2700,
+        min: 1957,
+        max: 2157,
         required: true,
-        helper: "ตัวอย่าง 2569",
+        helper: "ตัวอย่าง 2026",
       },
     });
     if (!value) return;
-    try { const result = await window.EmployeeHubDatabase.addPerformanceYear(value); state.performanceSettings = { ...state.performanceSettings, ...result }; state.performanceYear = Number(result.activeYear); state.performanceDataKey = ""; await refreshPerformanceData({ force: true }); showToast("เพิ่มปีประเมินเรียบร้อยแล้ว"); } catch (error) { showToast(error.message, "error"); }
+    try { const result = await window.EmployeeHubDatabase.addPerformanceYear(Number(value) + 543); state.performanceSettings = { ...state.performanceSettings, ...result }; state.performanceYear = Number(result.activeYear); state.performanceDataKey = ""; await refreshPerformanceData({ force: true }); showToast("เพิ่มปีประเมินเรียบร้อยแล้ว"); } catch (error) { showToast(error.message, "error"); }
   });
   document.getElementById("employee360Month")?.addEventListener("change", (event) => { state.employee360Month = event.target.value || currentYearMonth(); state.employee360Data = null; void refreshEmployee360Data(); });
   document.getElementById("employee360Employee")?.addEventListener("change", (event) => { state.employee360EmployeeId = event.target.value; state.employee360Data = null; void refreshEmployee360Data(); });
@@ -2512,7 +2512,7 @@ function renderAttendanceSection() {
         <div class="panel-head"><div><h2>บันทึกเวลาสายรายเดือน</h2><p>หนึ่งพนักงานต่อหนึ่งเดือน คะแนนคำนวณอัตโนมัติ</p></div></div>
         <form id="attendanceForm">
           <div class="form-grid">
-            <div class="field"><label for="workdayMonth">เดือน</label><input id="workdayMonth" type="month" required value="${escapeHtml(state.workdayMonth)}" /></div>
+            <div class="field"><label for="workdayMonth">เดือน/ปี (ค.ศ.)</label><input id="workdayMonth" type="month" lang="en-GB" data-calendar="gregorian" required value="${escapeHtml(state.workdayMonth)}" /></div>
             <div class="field"><label for="attendanceEmployee">พนักงาน</label><select id="attendanceEmployee" required><option value="">เลือกพนักงาน</option>${employees.map((employee) => `<option value="${escapeHtml(employee.id)}" ${employee.id === state.attendanceEmployeeId ? "selected" : ""}>${escapeHtml(`${employee.employeeCode} · ${employee.fullName}`)}</option>`).join("")}</select></div>
             <div class="field field-full"><label for="lateMinutes">นาทีสายรวมทั้งเดือน</label><input id="lateMinutes" type="number" min="0" step="1" value="${previewMinutes}" required /></div>
             <div class="score-preview field-full"><span>คะแนนเวลา</span><strong id="lateScorePreview">${calculateLateScore(previewMinutes)}</strong><small>0–29 = 100 · 30–59 = 90 · 60–89 = 80 · 90–119 = 70 · 120+ = 60</small></div>
@@ -2521,7 +2521,7 @@ function renderAttendanceSection() {
         </form>
       </article>
       <article class="panel">
-        <div class="panel-head"><div><h2>สรุปเดือน ${escapeHtml(state.workdayMonth)}</h2><p>ไม่เติมข้อมูลที่ไม่มีแถวต้นฉบับเป็น 0 โดยอัตโนมัติ</p></div><button id="exportAttendanceButton" class="button button-secondary button-small" type="button"><i data-lucide="file-down"></i>Export CSV</button></div>
+        <div class="panel-head"><div><h2>สรุปเดือน ${escapeHtml(state.workdayMonth)}</h2><p>ไม่เติมข้อมูลที่ไม่มีแถวต้นฉบับเป็น 0 โดยอัตโนมัติ</p></div><button id="exportWorkdayButton" class="button button-secondary button-small" type="button" title="ส่งออกเวลาสายและวันลาในไฟล์เดียว"><i data-lucide="file-down"></i>Export CSV รวม</button></div>
         <div class="kpi-grid compact-kpi-grid">
           <article class="kpi-card"><div class="kpi-head"><span>บันทึกแล้ว</span><span class="kpi-icon"><i data-lucide="database"></i></span></div><div class="kpi-value">${records.length}/${employees.length}</div></article>
           <article class="kpi-card"><div class="kpi-head"><span>นาทีสายรวม</span><span class="kpi-icon"><i data-lucide="timer"></i></span></div><div class="kpi-value">${formatNumber(totalMinutes, 0)}</div></article>
@@ -2547,7 +2547,7 @@ function renderLeaveSection() {
   const editing = selectedLeaveRecord();
   const editingType = normalizedLeaveType(editing?.leaveType);
   const filtered = state.leaveRecords.filter((record) => {
-    if (record.year !== Number(state.workdayYear)) return false;
+    if ((record.yearMonth || String(record.date || "").slice(0, 7)) !== state.workdayMonth) return false;
     if (state.leaveEmployeeId && record.employeeId !== state.leaveEmployeeId) return false;
     if (state.leaveTypeFilter && normalizedLeaveType(record.leaveType) !== state.leaveTypeFilter) return false;
     return true;
@@ -2568,7 +2568,7 @@ function renderLeaveSection() {
         <form id="leaveForm">
           <div class="form-grid">
             <div class="field"><label for="leaveEmployee">พนักงาน</label><select id="leaveEmployee" required><option value="">เลือกพนักงาน</option>${employees.map((employee) => `<option value="${escapeHtml(employee.id)}" ${(editing?.employeeId || "") === employee.id ? "selected" : ""}>${escapeHtml(`${employee.employeeCode} · ${employee.fullName}`)}</option>`).join("")}</select></div>
-            <div class="field"><label for="leaveDate">วันที่เริ่มลา</label><input id="leaveDate" type="date" required value="${escapeHtml(editing?.date || currentLocalDateInputValue())}" /></div>
+            <div class="field"><label for="leaveDate">วันที่เริ่มลา (วัน/เดือน/ปี ค.ศ.)</label><input id="leaveDate" type="date" lang="en-GB" data-calendar="gregorian" required value="${escapeHtml(editing?.date || currentLocalDateInputValue())}" /></div>
             <div class="field"><label for="leaveType">ประเภท</label><select id="leaveType" required>${Object.entries(LEAVE_TYPE_LABELS).map(([type, label]) => `<option value="${type}" ${editingType === type ? "selected" : ""}>${label}</option>`).join("")}</select></div>
             <div class="field"><label for="leaveDays">จำนวนวัน</label><input id="leaveDays" type="number" min="0.5" max="365" step="0.5" required value="${editing?.days ?? 1}" /></div>
             <div class="field field-full"><label for="leaveNote">หมายเหตุ</label><textarea id="leaveNote" maxlength="1000" placeholder="ระบุรายละเอียดของลาอื่นๆ">${escapeHtml(editing?.note || "")}</textarea></div>
@@ -2578,7 +2578,7 @@ function renderLeaveSection() {
         </form>
       </article>
       <article class="panel">
-        <div class="panel-head"><div><h2>สรุปวันลา พ.ศ. ${Number(state.workdayYear) + 543}</h2><p>รวมตามตัวกรองที่เลือก</p></div><button id="exportLeaveButton" class="button button-secondary button-small" type="button"><i data-lucide="file-down"></i>Export CSV</button></div>
+        <div class="panel-head"><div><h2>สรุปวันลาเดือน ${escapeHtml(state.workdayMonth)}</h2><p>รวมตามตัวกรองที่เลือก</p></div><button id="exportWorkdayButton" class="button button-secondary button-small" type="button" title="ส่งออกเวลาสายและวันลาในไฟล์เดียว"><i data-lucide="file-down"></i>Export CSV รวม</button></div>
         <div class="kpi-grid compact-kpi-grid">
           <article class="kpi-card"><div class="kpi-head"><span>รายการ</span><span class="kpi-icon"><i data-lucide="list"></i></span></div><div class="kpi-value">${filtered.length}</div></article>
           <article class="kpi-card"><div class="kpi-head"><span>วันลารวม</span><span class="kpi-icon"><i data-lucide="calendar-minus-2"></i></span></div><div class="kpi-value">${formatNumber(totalDays)}</div></article>
@@ -2587,9 +2587,9 @@ function renderLeaveSection() {
       </article>
     </div>
     <article class="panel">
-      <div class="panel-head"><div><h2>ประวัติวันลา</h2><p>${filtered.length} รายการจากปีที่เลือก</p></div></div>
+      <div class="panel-head"><div><h2>ประวัติวันลา</h2><p>${filtered.length} รายการจากเดือนที่เลือก</p></div></div>
       <div class="toolbar">
-        <select id="leaveYearFilter"><option value="${state.workdayYear}">พ.ศ. ${Number(state.workdayYear) + 543}</option>${[...new Set(state.leaveRecords.map((record) => record.year))].filter((year) => year !== Number(state.workdayYear)).sort((a,b)=>b-a).map((year)=>`<option value="${year}">พ.ศ. ${year+543}</option>`).join("")}</select>
+        <input id="leaveMonthFilter" type="month" lang="en-GB" data-calendar="gregorian" aria-label="เลือกเดือน/ปีประวัติวันลาแบบ ค.ศ." title="เดือน/ปี (ค.ศ.)" value="${escapeHtml(state.workdayMonth)}" />
         <select id="leaveEmployeeFilter" class="toolbar-grow"><option value="">พนักงานทุกคน</option>${employees.map((employee) => `<option value="${escapeHtml(employee.id)}" ${state.leaveEmployeeId === employee.id ? "selected" : ""}>${escapeHtml(`${employee.employeeCode} · ${employee.fullName}`)}</option>`).join("")}</select>
         <select id="leaveTypeFilter"><option value="">ทุกประเภท</option>${Object.entries(LEAVE_TYPE_LABELS).map(([type, label]) => `<option value="${type}" ${state.leaveTypeFilter === type ? "selected" : ""}>${label}</option>`).join("")}</select>
       </div>
@@ -2617,7 +2617,7 @@ function renderLeaveBalanceSection() {
 
   return `
     <article class="panel">
-      <div class="panel-head"><div><h2>สิทธิ์ลาคงเหลือ พ.ศ. ${Number(state.workdayYear) + 543}</h2><p>คำนวณจากวันลาที่บันทึกและกฎบริษัทที่ตั้งค่า</p></div><div class="panel-actions"><select id="balanceYearFilter">${[state.workdayYear, ...[...new Set(state.leaveRecords.map((record) => record.year))].filter((year) => year !== Number(state.workdayYear)).sort((a,b)=>b-a)].map((year)=>`<option value="${year}" ${Number(year)===Number(state.workdayYear)?"selected":""}>พ.ศ. ${Number(year)+543}</option>`).join("")}</select><button id="workdaySettingsButton" class="button button-secondary button-small" type="button"><i data-lucide="settings-2"></i>ตั้งค่าสิทธิ์</button></div></div>
+      <div class="panel-head"><div><h2>สิทธิ์ลาคงเหลือ ค.ศ. ${Number(state.workdayYear)}</h2><p>คำนวณจากวันลาที่บันทึกและกฎบริษัทที่ตั้งค่า</p></div><div class="panel-actions"><select id="balanceYearFilter" aria-label="เลือกปีสิทธิ์ลาแบบ ค.ศ.">${[state.workdayYear, ...[...new Set(state.leaveRecords.map((record) => record.year))].filter((year) => year !== Number(state.workdayYear)).sort((a,b)=>b-a)].map((year)=>`<option value="${year}" ${Number(year)===Number(state.workdayYear)?"selected":""}>ค.ศ. ${Number(year)}</option>`).join("")}</select><button id="workdaySettingsButton" class="button button-secondary button-small" type="button"><i data-lucide="settings-2"></i>ตั้งค่าสิทธิ์</button></div></div>
       ${settings.configured
         ? `<div class="notice notice-info"><i data-lucide="info"></i><div>พักร้อนตามเกณฑ์ 6/8/10/12/14/15 วัน และคำนวณอายุงาน ณ <strong>${settings.vacationReference === "yearEnd" ? "สิ้นปี" : "วันที่ 1 มกราคม"}</strong> · อัปเดต ${formatDate(settings.updatedAt)}</div></div>`
         : `<div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div><strong>ยังไม่ได้ตั้งค่าสิทธิ์วันลาของบริษัท</strong><br>ระบบจะแสดงจำนวนวันที่ใช้แล้ว แต่ยังไม่แสดงยอดคงเหลือจนกว่าจะบันทึกกฎในปุ่ม “ตั้งค่าสิทธิ์”</div></div>`}
@@ -2690,7 +2690,7 @@ function bindAttendanceEvents() {
       else showToast(error.message, "error");
     } finally { submit.disabled = false; }
   });
-  document.getElementById("exportAttendanceButton")?.addEventListener("click", exportAttendanceCsv);
+  document.getElementById("exportWorkdayButton")?.addEventListener("click", exportWorkdayCsv);
   els.workdayView.querySelectorAll(".edit-attendance").forEach((button) => button.addEventListener("click", () => {
     state.attendanceEmployeeId = button.dataset.employeeId;
     renderWorkday();
@@ -2720,8 +2720,11 @@ function bindAttendanceEvents() {
 }
 
 function bindLeaveEvents() {
-  document.getElementById("leaveYearFilter")?.addEventListener("change", (event) => {
-    state.workdayYear = Number(event.target.value);
+  document.getElementById("leaveMonthFilter")?.addEventListener("change", (event) => {
+    const selectedMonth = String(event.target.value || "");
+    if (!/^\d{4}-\d{2}$/.test(selectedMonth)) return;
+    state.workdayMonth = selectedMonth;
+    state.workdayYear = Number(selectedMonth.slice(0, 4));
     state.leaveEditingId = "";
     state.workdayDataKey = "";
     void refreshWorkdayData({ force: true });
@@ -2746,6 +2749,7 @@ function bindLeaveEvents() {
         expectedVersion: editing?.version || 0,
       });
       showToast(editing ? "อัปเดตวันลาแล้ว" : "บันทึกวันลาแล้ว");
+      state.workdayMonth = result.yearMonth;
       state.workdayYear = result.year;
       state.leaveEditingId = "";
       state.workdayDataKey = "";
@@ -2755,7 +2759,7 @@ function bindLeaveEvents() {
       else showToast(error.message, "error");
     } finally { submit.disabled = false; }
   });
-  document.getElementById("exportLeaveButton")?.addEventListener("click", exportLeaveCsv);
+  document.getElementById("exportWorkdayButton")?.addEventListener("click", exportWorkdayCsv);
   els.workdayView.querySelectorAll(".edit-leave").forEach((button) => button.addEventListener("click", () => {
     state.leaveEditingId = button.dataset.id;
     renderWorkday();
@@ -2846,28 +2850,28 @@ function downloadCsv(rows, filename) {
   showToast("Export CSV เรียบร้อยแล้ว");
 }
 
-function exportAttendanceCsv() {
-  const recordsByEmployee = new Map(state.attendanceMonthly.map((record) => [record.employeeId, record]));
-  const rows = [["เดือน", "รหัสพนักงาน", "ชื่อพนักงาน", "นาทีสาย", "คะแนนเวลา", "สถานะข้อมูล", "แก้ไขล่าสุด"]];
-  sortedActiveEmployees().forEach((employee) => {
-    const record = recordsByEmployee.get(employee.id);
-    rows.push([state.workdayMonth, employee.employeeCode, employee.fullName, record?.lateMinutes ?? "", record?.lateScore ?? "", record ? "บันทึกแล้ว" : "ยังไม่มีข้อมูล", record?.updatedAt || ""]);
-  });
-  downloadCsv(rows, `workday-attendance-${state.workdayMonth}.csv`);
-}
-
-function exportLeaveCsv() {
+function exportWorkdayCsv() {
   const employeesById = employeeMap();
-  const records = state.leaveRecords.filter((record) => record.year === Number(state.workdayYear)
-    && (!state.leaveEmployeeId || record.employeeId === state.leaveEmployeeId)
-    && (!state.leaveTypeFilter || normalizedLeaveType(record.leaveType) === state.leaveTypeFilter));
-  if (!records.length) return showToast("ไม่มีข้อมูลวันลาสำหรับ Export", "warning");
-  const rows = [["วันที่", "รหัสพนักงาน", "ชื่อพนักงาน", "ประเภท", "จำนวนวัน", "ไม่รวมวันหยุด", "หมายเหตุ", "แก้ไขล่าสุด"]];
-  records.forEach((record) => {
-    const employee = employeesById.get(record.employeeId);
-    rows.push([record.date, employee?.employeeCode || "", employee?.fullName || record.employeeId, leaveTypeLabel(record.leaveType), record.days, record.excludeHolidays ? "ใช่" : "ไม่", record.note, record.updatedAt]);
+  const applyLeaveFilters = state.workdayTab === "leave";
+  const employeeFilter = applyLeaveFilters ? state.leaveEmployeeId : "";
+  const leaveTypeFilter = applyLeaveFilters ? state.leaveTypeFilter : "";
+  const attendanceRecords = state.attendanceMonthly.filter((record) => record.yearMonth === state.workdayMonth);
+  const recordsByEmployee = new Map(attendanceRecords.map((record) => [record.employeeId, record]));
+  const employees = sortedActiveEmployees().filter((employee) => !employeeFilter || employee.id === employeeFilter);
+  const leaveRecords = state.leaveRecords.filter((record) => (record.yearMonth || String(record.date || "").slice(0, 7)) === state.workdayMonth
+    && (!employeeFilter || record.employeeId === employeeFilter)
+    && (!leaveTypeFilter || normalizedLeaveType(record.leaveType) === leaveTypeFilter));
+  if (!employees.length && !leaveRecords.length) return showToast("ไม่มีข้อมูลเวลาสายหรือวันลาสำหรับ Export", "warning");
+  const rows = [["ประเภทข้อมูล", "เดือน", "วันที่", "รหัสพนักงาน", "ชื่อพนักงาน", "นาทีสาย", "คะแนนเวลา", "ประเภทวันลา", "จำนวนวันลา", "ไม่รวมวันหยุด", "หมายเหตุ", "สถานะข้อมูล", "แก้ไขล่าสุด"]];
+  employees.forEach((employee) => {
+    const record = recordsByEmployee.get(employee.id);
+    rows.push(["เวลาสาย", state.workdayMonth, "", employee.employeeCode, employee.fullName, record?.lateMinutes ?? "", record?.lateScore ?? "", "", "", "", "", record ? "บันทึกแล้ว" : "ยังไม่มีข้อมูล", record?.updatedAt || ""]);
   });
-  downloadCsv(rows, `workday-leave-${state.workdayYear}.csv`);
+  leaveRecords.forEach((record) => {
+    const employee = employeesById.get(record.employeeId);
+    rows.push(["วันลา", state.workdayMonth, record.date, employee?.employeeCode || "", employee?.fullName || record.employeeId, "", "", leaveTypeLabel(record.leaveType), record.days, record.excludeHolidays ? "ใช่" : "ไม่", record.note, "บันทึกแล้ว", record.updatedAt]);
+  });
+  downloadCsv(rows, `workday-attendance-leave-${state.workdayMonth}.csv`);
 }
 
 
@@ -3123,7 +3127,7 @@ function renderMonthly() {
           ? `<div class="notice notice-success"><i data-lucide="circle-check"></i><div>นำเข้าข้อมูลแล้ว: รายวัน <strong>${Number(counts.dailyPerformanceEntries) || 0}</strong> รายการ · Overrides <strong>${Number(counts.monthlyPerformanceOverrides) || 0}</strong> รายการ</div></div>`
           : `<div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div>ไม่พบข้อมูล Monthly Performance เดิมในระบบ Production หากจำเป็นต้องกู้หรือนำเข้าข้อมูลย้อนหลัง ให้ใช้ชุด Migration Tools Archive ภายในบริษัท</div></div>`}
         <div class="monthly-toolbar">
-          <div class="field compact-field"><label for="monthlyMonthPicker">เดือนประเมิน</label><input id="monthlyMonthPicker" type="month" value="${escapeHtml(state.monthlyMonth)}" /></div>
+          <div class="field compact-field"><label for="monthlyMonthPicker">เดือน/ปีประเมิน (ค.ศ.)</label><input id="monthlyMonthPicker" type="month" lang="en-GB" data-calendar="gregorian" value="${escapeHtml(state.monthlyMonth)}" /></div>
           <span class="badge ${monthlyMonthStatusBadge(status)}">${monthlyMonthStatusLabel(status)}</span>
         </div>
         <div class="tab-list" role="tablist" aria-label="Monthly Performance">
@@ -3221,7 +3225,7 @@ function renderMonthlyEntrySection() {
         ${locked ? `<div class="notice notice-warning"><i data-lucide="lock-keyhole"></i><div>เดือนนี้ถูกปิดแล้ว ต้องเปิดเดือนกลับมาแก้ไขก่อน</div></div>` : ""}
         <form id="monthlyEntryForm">
           <div class="form-grid">
-            <div class="field"><label for="monthlyEntryDate">วันที่</label><input id="monthlyEntryDate" type="date" value="${escapeHtml(selectedDate)}" required ${locked ? "disabled" : ""} /><span class="field-help">เลือกวันย้อนหลังได้ ระบบจะเปลี่ยนเดือนประเมินให้ตรงกับวันที่โดยอัตโนมัติ</span></div>
+            <div class="field"><label for="monthlyEntryDate">วันที่ (วัน/เดือน/ปี ค.ศ.)</label><input id="monthlyEntryDate" type="date" lang="en-GB" data-calendar="gregorian" value="${escapeHtml(selectedDate)}" required ${locked ? "disabled" : ""} /><span class="field-help">เลือกวันย้อนหลังได้ ระบบจะเปลี่ยนเดือนประเมินให้ตรงกับวันที่โดยอัตโนมัติ</span></div>
             <div class="field"><label for="monthlyEntryEmployee">พนักงาน</label><select id="monthlyEntryEmployee" required ${editing || locked ? "disabled" : ""}>${monthlyEmployeeOptions(selectedEmployeeId, !editing)}</select></div>
             <div class="field"><label for="monthlyEntryStatus">สถานะ</label><select id="monthlyEntryStatus" required ${locked ? "disabled" : ""}>${MONTHLY_STATUSES.map((status) => `<option value="${status.id}" ${status.id === selectedStatus ? "selected" : ""}>${escapeHtml(status.name)}</option>`).join("")}</select></div>
             <div class="field"><label>คะแนนนอกวันทำงาน</label><label class="check-field"><input id="monthlyOffDayPerformance" type="checkbox" ${offDayPerformance ? "checked" : ""} ${selectedDefinition.countsAsWork || locked ? "disabled" : ""} /> ทำคะแนนในวันลา/วันหยุด</label></div>
@@ -3253,7 +3257,7 @@ function renderMonthlyHistorySection() {
       <div class="panel-head"><div><h2>รายการข้อมูลรายวัน</h2><p>${rows.length} จาก ${state.monthlyEntries.length} รายการในเดือน ${escapeHtml(state.monthlyMonth)}</p></div><button id="exportMonthlyEntriesButton" class="button button-secondary button-small" type="button"><i data-lucide="download"></i>Export CSV</button></div>
       <div class="toolbar monthly-filter-toolbar">
         <div class="field compact-field"><label for="monthlyHistoryEmployee">พนักงาน</label><select id="monthlyHistoryEmployee"><option value="">ทุกคน</option>${monthlyEmployeeOptions(state.monthlyHistoryEmployeeId)}</select></div>
-        <div class="field compact-field"><label for="monthlyHistoryDate">วันที่</label><input id="monthlyHistoryDate" type="date" value="${escapeHtml(state.monthlyHistoryDate)}" /></div>
+        <div class="field compact-field"><label for="monthlyHistoryDate">วันที่ (วัน/เดือน/ปี ค.ศ.)</label><input id="monthlyHistoryDate" type="date" lang="en-GB" data-calendar="gregorian" value="${escapeHtml(state.monthlyHistoryDate)}" /></div>
         <button id="clearMonthlyHistoryFilter" class="button button-ghost button-small" type="button"><i data-lucide="x"></i>ล้างตัวกรอง</button>
       </div>
       <div class="table-wrap monthly-history-table"><table><thead><tr><th>วันที่</th><th>พนักงาน</th><th>สถานะ</th>${MONTHLY_CRITERIA.map((_, index) => `<th class="money">C${index + 1}</th>`).join("")}<th>หมายเหตุ</th><th>จัดการ</th></tr></thead><tbody>${rows.map((entry) => {
@@ -3854,7 +3858,7 @@ function renderClosing() {
     <div class="page-grid">
       <article class="panel closing-hero">
         <div class="panel-head"><div><p class="eyebrow">MONTH-END CERTIFICATION</p><h2>ศูนย์ปิดรอบเดือน</h2><p>ตรวจ รับรอง และล็อกข้อมูลประจำเดือนอย่างเป็นทางการ</p></div>${closureBadge}</div>
-        <div class="closing-toolbar"><div class="field compact-field"><label for="closingMonthPicker">เดือนที่ตรวจ</label><input id="closingMonthPicker" type="month" value="${escapeHtml(state.closingMonth)}" /></div><div class="panel-actions"><button id="refreshClosingButton" class="button button-secondary" type="button"><i data-lucide="refresh-cw"></i>ตรวจใหม่</button><button id="exportClosingButton" class="button button-primary" type="button" ${summary ? "" : "disabled"}><i data-lucide="download"></i>Export สถานะ</button></div></div>
+        <div class="closing-toolbar"><div class="field compact-field"><label for="closingMonthPicker">เดือน/ปีที่ตรวจ (ค.ศ.)</label><input id="closingMonthPicker" type="month" lang="en-GB" data-calendar="gregorian" value="${escapeHtml(state.closingMonth)}" /></div><div class="panel-actions"><button id="refreshClosingButton" class="button button-secondary" type="button"><i data-lucide="refresh-cw"></i>ตรวจใหม่</button><button id="exportClosingButton" class="button button-primary" type="button" ${summary ? "" : "disabled"}><i data-lucide="download"></i>Export สถานะ</button></div></div>
         ${summary ? `<div class="kpi-grid compact-kpi-grid closing-kpis"><article class="kpi-card"><div class="kpi-head"><span>ขั้นตอนจำเป็น</span><span class="kpi-icon"><i data-lucide="list-checks"></i></span></div><div class="kpi-value">${summary.requiredDone}/5</div><div class="kpi-note">ต้องครบก่อนรับรองรอบ</div></article><article class="kpi-card"><div class="kpi-head"><span>พนักงานในรอบ</span><span class="kpi-icon"><i data-lucide="users-round"></i></span></div><div class="kpi-value">${summary.eligibleEmployees.length}</div><div class="kpi-note">อ้างอิงวันที่เริ่มงาน</div></article><article class="kpi-card"><div class="kpi-head"><span>Service Incentive</span><span class="kpi-icon"><i data-lucide="badge-dollar-sign"></i></span></div><div class="kpi-value">${summary.counts.incentiveCount}/${summary.eligibleEmployees.length}</div><div class="kpi-note">ต้องครบก่อนล็อกรอบ</div></article><article class="kpi-card"><div class="kpi-head"><span>สถานะรอบ</span><span class="kpi-icon"><i data-lucide="${summary.finalized ? "lock-keyhole" : "lock-keyhole-open"}"></i></span></div><div class="kpi-value closing-status-text">${summary.finalized ? "LOCKED" : String(summary.closure?.status || "OPEN")}</div><div class="kpi-note">Version ${summary.closure?.version || 0}</div></article></div>` : ""}
       </article>
       ${closurePanel}
@@ -4380,8 +4384,8 @@ function renderAuditCenter() {
           <div class="field audit-search-field"><label for="auditSearchInput">ค้นหา</label><input id="auditSearchInput" type="search" value="${escapeHtml(state.auditQuery)}" placeholder="ชื่อ รหัสพนักงาน เดือน หรือ Action" /></div>
           <div class="field compact-field"><label for="auditModuleFilter">โมดูล</label><select id="auditModuleFilter">${auditModuleOptions()}</select></div>
           <div class="field compact-field"><label for="auditActionFilter">ประเภท</label><select id="auditActionFilter">${auditActionOptions()}</select></div>
-          <div class="field compact-field"><label for="auditDateFrom">ตั้งแต่วันที่</label><input id="auditDateFrom" type="date" value="${escapeHtml(state.auditDateFrom)}" /></div>
-          <div class="field compact-field"><label for="auditDateTo">ถึงวันที่</label><input id="auditDateTo" type="date" value="${escapeHtml(state.auditDateTo)}" /></div>
+          <div class="field compact-field"><label for="auditDateFrom">ตั้งแต่วันที่ (วัน/เดือน/ปี ค.ศ.)</label><input id="auditDateFrom" type="date" lang="en-GB" data-calendar="gregorian" value="${escapeHtml(state.auditDateFrom)}" /></div>
+          <div class="field compact-field"><label for="auditDateTo">ถึงวันที่ (วัน/เดือน/ปี ค.ศ.)</label><input id="auditDateTo" type="date" lang="en-GB" data-calendar="gregorian" value="${escapeHtml(state.auditDateTo)}" /></div>
           <div class="field compact-field"><label for="auditLimitFilter">โหลดล่าสุด</label><select id="auditLimitFilter">${[100,300,500,1000].map((value) => `<option value="${value}" ${state.auditLimit === value ? "selected" : ""}>${value} รายการ</option>`).join("")}</select></div>
           <div class="panel-actions audit-filter-actions"><button class="button button-primary" type="submit"><i data-lucide="search"></i>ค้นหา</button><button id="resetAuditFilters" class="button button-ghost" type="button"><i data-lucide="rotate-ccw"></i>ล้าง</button></div>
         </form>

@@ -101,6 +101,12 @@ a { color: inherit; }
   transition: border-color .18s ease, box-shadow .18s ease;
 }
 .field textarea { min-height: 96px; resize: vertical; }
+input[data-calendar="gregorian"] {
+  direction: ltr;
+  text-align: left;
+  font-variant-numeric: tabular-nums;
+  color-scheme: light;
+}
 .field input:focus, .field select:focus, .field textarea:focus, .toolbar input:focus, .toolbar select:focus {
   border-color: rgba(31, 113, 143, 0.7);
   box-shadow: 0 0 0 4px rgba(31, 113, 143, 0.10);
