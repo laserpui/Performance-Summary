@@ -1579,7 +1579,13 @@ body.modal-open { overflow: hidden; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .modal-backdrop, .modal-card, .toast, .toast-progress, .dialog-shake { animation: none !important; }
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+  }
+  .modal-backdrop, .modal-card, .toast, .toast-progress, .dialog-shake, .loading-skeleton { animation: none !important; }
 }
 
 .modal-card.modal-wide { width: min(920px, 100%); }

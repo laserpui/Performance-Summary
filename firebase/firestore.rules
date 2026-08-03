@@ -48,6 +48,60 @@ service cloud.firestore {
       return value is int && value >= 1 && value <= 12;
     }
 
+    function validYearMonth(value) {
+      return value is string
+        && value.size() == 7
+        && value.matches('^[0-9]{4}-(0[1-9]|1[0-2])$');
+    }
+
+    function validIsoDate(value) {
+      return value is string
+        && value.size() == 10
+        && value.matches('^[0-9]{4}-(0[1-9]|1[0-2])-[0-9]{2}$');
+    }
+
+    function validCreateMetadata(data) {
+      return data.createdAt == request.time
+        && data.createdBy == request.auth.uid
+        && data.updatedAt == request.time
+        && data.updatedBy == request.auth.uid;
+    }
+
+    function validUpdateMetadata(data) {
+      return data.createdAt == resource.data.createdAt
+        && data.createdBy == resource.data.createdBy
+        && data.updatedAt == request.time
+        && data.updatedBy == request.auth.uid;
+    }
+
+    function versionStartsAtOne(data) {
+      return data.version is int && data.version == 1;
+    }
+
+    function versionIncrementsByOne(data) {
+      return data.version is int && data.version == resource.data.version + 1;
+    }
+
+    function monthClosurePath(yearMonth) {
+      return /databases/$(database)/documents/monthClosures/$(yearMonth);
+    }
+
+    function monthlyStatusPath(yearMonth) {
+      return /databases/$(database)/documents/monthlyPerformanceStatus/$(yearMonth);
+    }
+
+    function monthIsEditable(yearMonth) {
+      return validYearMonth(yearMonth)
+        && (!exists(monthClosurePath(yearMonth))
+          || get(monthClosurePath(yearMonth)).data.status != 'FINALIZED');
+    }
+
+    function monthlyEntryIsEditable(yearMonth) {
+      return monthIsEditable(yearMonth)
+        && (!exists(monthlyStatusPath(yearMonth))
+          || get(monthlyStatusPath(yearMonth)).data.status != 'CLOSED');
+    }
+
     function validScore(value) {
       return value is int && value >= 20 && value <= 100 && value % 5 == 0;
     }
@@ -111,12 +165,14 @@ service cloud.firestore {
 
     function validEvaluation(data) {
       return data.keys().hasOnly([
-          'employeeId', 'year', 'month', 'scores', 'note', 'source', 'version',
-          'createdAt', 'createdBy', 'updatedAt', 'updatedBy'
+          'employeeId', 'yearMonth', 'year', 'month', 'scores', 'note', 'source',
+          'sourceSync', 'scoreSources', 'syncStatus', 'disciplinePending',
+          'manualOverrides', 'version', 'createdAt', 'createdBy', 'updatedAt', 'updatedBy'
         ])
         && data.employeeId is string
         && data.employeeId.size() >= 2
         && data.employeeId.size() <= 80
+        && validYearMonth(data.yearMonth)
         && validYear(data.year)
         && validMonthZeroBased(data.month)
         && validScores(data.scores)
@@ -124,6 +180,14 @@ service cloud.firestore {
         && data.note.size() <= 2000
         && data.source is string
         && data.source.size() <= 160
+        && data.sourceSync is map
+        && data.scoreSources is map
+        && (data.syncStatus == 'manual'
+          || data.syncStatus == 'synced'
+          || data.syncStatus == 'source_changed'
+          || data.syncStatus == 'manual_override')
+        && data.disciplinePending is bool
+        && data.manualOverrides is map
         && data.version is int
         && data.version >= 1
         && data.createdAt is timestamp
@@ -134,6 +198,7 @@ service cloud.firestore {
 
     function immutableEvaluationFields() {
       return request.resource.data.employeeId == resource.data.employeeId
+        && request.resource.data.yearMonth == resource.data.yearMonth
         && request.resource.data.year == resource.data.year
         && request.resource.data.month == resource.data.month
         && request.resource.data.createdAt == resource.data.createdAt
@@ -154,8 +219,7 @@ service cloud.firestore {
         && data.employeeId is string
         && data.employeeId.size() >= 2
         && data.employeeId.size() <= 80
-        && data.yearMonth is string
-        && data.yearMonth.size() == 7
+        && validYearMonth(data.yearMonth)
         && validGregorianYear(data.year)
         && validMonthOneBased(data.month)
         && validMoney(data.salesAmount)
@@ -187,6 +251,226 @@ service cloud.firestore {
         && request.resource.data.createdBy == resource.data.createdBy;
     }
 
+    function validLateScore(value) {
+      return value == 60 || value == 70 || value == 80 || value == 90 || value == 100;
+    }
+
+    function expectedLateScore(minutes) {
+      return minutes <= 29 ? 100
+        : minutes <= 59 ? 90
+        : minutes <= 89 ? 80
+        : minutes <= 119 ? 70
+        : 60;
+    }
+
+    function validAttendance(data) {
+      return data.keys().hasOnly([
+          'employeeId', 'yearMonth', 'year', 'month', 'lateMinutes', 'lateScore',
+          'source', 'sourceRecordId', 'sourceDate', 'version', 'createdAt',
+          'createdBy', 'updatedAt', 'updatedBy', 'importedAt'
+        ])
+        && data.employeeId is string && data.employeeId.size() >= 2 && data.employeeId.size() <= 80
+        && validYearMonth(data.yearMonth)
+        && validGregorianYear(data.year)
+        && validMonthOneBased(data.month)
+        && data.lateMinutes is int && data.lateMinutes >= 0 && data.lateMinutes <= 100000
+        && validLateScore(data.lateScore)
+        && data.lateScore == expectedLateScore(data.lateMinutes)
+        && data.source is string && data.source.size() <= 160
+        && (!('sourceRecordId' in data) || (data.sourceRecordId is string && data.sourceRecordId.size() <= 160))
+        && (!('sourceDate' in data) || (data.sourceDate is string && data.sourceDate.size() <= 40))
+        && (!('importedAt' in data) || data.importedAt is timestamp)
+        && data.createdAt is timestamp && data.createdBy is string
+        && data.updatedAt == request.time && data.updatedBy == request.auth.uid;
+    }
+
+    function validLeaveRecord(data) {
+      return data.keys().hasOnly([
+          'employeeId', 'date', 'yearMonth', 'year', 'month', 'leaveType', 'days',
+          'note', 'excludeHolidays', 'source', 'sourceRecordId', 'originalLeaveType',
+          'migrationAdjustment', 'version', 'createdAt', 'createdBy', 'updatedAt',
+          'updatedBy', 'importedAt'
+        ])
+        && data.employeeId is string && data.employeeId.size() >= 2 && data.employeeId.size() <= 80
+        && validIsoDate(data.date)
+        && validYearMonth(data.yearMonth)
+        && validGregorianYear(data.year)
+        && validMonthOneBased(data.month)
+        && (data.leaveType == 'sick' || data.leaveType == 'personal'
+          || data.leaveType == 'vacation' || data.leaveType == 'ordination'
+          || data.leaveType == 'other')
+        && data.days is number && data.days > 0 && data.days <= 365
+        && data.note is string && data.note.size() <= 1000
+        && data.excludeHolidays is bool
+        && data.source is string && data.source.size() <= 160
+        && (!('sourceRecordId' in data) || (data.sourceRecordId is string && data.sourceRecordId.size() <= 160))
+        && (!('originalLeaveType' in data) || (data.originalLeaveType is string && data.originalLeaveType.size() <= 80))
+        && (!('migrationAdjustment' in data) || (data.migrationAdjustment is string && data.migrationAdjustment.size() <= 500))
+        && (!('importedAt' in data) || data.importedAt is timestamp)
+        && data.createdAt is timestamp && data.createdBy is string
+        && data.updatedAt == request.time && data.updatedBy == request.auth.uid;
+    }
+
+    function validMonthlyScore(value, legacyException) {
+      return value is number && value >= -0.5
+        && (value <= 3 || (legacyException && value == 3.5));
+    }
+
+    function validMonthlyScores(scores, status, legacyException) {
+      return scores is map
+        && scores.keys().hasOnly(['C1', 'C2', 'C3', 'C4', 'C5'])
+        && ((status != 'WORK' && status != 'WEEKEND_WORK')
+          || scores.keys().hasAll(['C1', 'C2', 'C3', 'C4', 'C5']))
+        && (!('C1' in scores) || validMonthlyScore(scores.C1, legacyException))
+        && (!('C2' in scores) || validMonthlyScore(scores.C2, legacyException))
+        && (!('C3' in scores) || validMonthlyScore(scores.C3, legacyException))
+        && (!('C4' in scores) || validMonthlyScore(scores.C4, legacyException))
+        && (!('C5' in scores) || validMonthlyScore(scores.C5, legacyException));
+    }
+
+    function validDailyPerformance(data) {
+      return data.keys().hasOnly([
+          'employeeId', 'yearMonth', 'year', 'month', 'date', 'status',
+          'countsAsWork', 'note', 'scores', 'legacyException', 'source',
+          'sourceRecordId', 'sourceScoreRecordIds', 'sourceUpdatedAt', 'version',
+          'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'importedAt'
+        ])
+        && data.employeeId is string && data.employeeId.size() >= 2 && data.employeeId.size() <= 80
+        && validYearMonth(data.yearMonth)
+        && validGregorianYear(data.year)
+        && validMonthOneBased(data.month)
+        && validIsoDate(data.date)
+        && (data.status == 'WORK' || data.status == 'WEEKEND_WORK'
+          || data.status == 'SICK_LEAVE' || data.status == 'PERSONAL_LEAVE'
+          || data.status == 'VACATION' || data.status == 'COMP_OFF'
+          || data.status == 'HOLIDAY')
+        && data.countsAsWork == (data.status == 'WORK' || data.status == 'WEEKEND_WORK')
+        && data.note is string && data.note.size() <= 1000
+        && data.legacyException is bool
+        && validMonthlyScores(data.scores, data.status, data.legacyException)
+        && data.source is string && data.source.size() <= 160
+        && (!('sourceRecordId' in data) || (data.sourceRecordId is string && data.sourceRecordId.size() <= 160))
+        && (!('sourceScoreRecordIds' in data) || data.sourceScoreRecordIds is list)
+        && (!('sourceUpdatedAt' in data) || data.sourceUpdatedAt is timestamp)
+        && (!('importedAt' in data) || data.importedAt is timestamp)
+        && data.createdAt is timestamp && data.createdBy is string
+        && data.updatedAt == request.time && data.updatedBy == request.auth.uid;
+    }
+
+    function validMonthlyOverride(data) {
+      return data.keys().hasOnly([
+          'employeeId', 'yearMonth', 'year', 'month', 'actualWorkDaysOverride',
+          'source', 'sourceUpdatedAt', 'sourceUpdatedBy', 'version', 'createdAt',
+          'createdBy', 'updatedAt', 'updatedBy', 'importedAt'
+        ])
+        && data.employeeId is string && data.employeeId.size() >= 2 && data.employeeId.size() <= 80
+        && validYearMonth(data.yearMonth)
+        && validGregorianYear(data.year)
+        && validMonthOneBased(data.month)
+        && data.actualWorkDaysOverride is int
+        && data.actualWorkDaysOverride >= 0 && data.actualWorkDaysOverride <= 31
+        && data.source is string && data.source.size() <= 160
+        && (!('sourceUpdatedAt' in data) || data.sourceUpdatedAt is timestamp)
+        && (!('sourceUpdatedBy' in data) || data.sourceUpdatedBy is string)
+        && (!('importedAt' in data) || data.importedAt is timestamp)
+        && data.createdAt is timestamp && data.createdBy is string
+        && data.updatedAt == request.time && data.updatedBy == request.auth.uid;
+    }
+
+    function validMonthlyStatus(data) {
+      return data.keys().hasOnly([
+          'yearMonth', 'year', 'month', 'status', 'reason', 'validation', 'version',
+          'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'closedAt', 'closedBy'
+        ])
+        && validYearMonth(data.yearMonth)
+        && validGregorianYear(data.year)
+        && validMonthOneBased(data.month)
+        && (data.status == 'OPEN' || data.status == 'REVIEW' || data.status == 'CLOSED')
+        && data.reason is string && data.reason.size() <= 1000
+        && (data.validation == null || data.validation is map)
+        && (!('closedAt' in data) || data.closedAt is timestamp)
+        && (!('closedBy' in data) || data.closedBy is string)
+        && data.createdAt is timestamp && data.createdBy is string
+        && data.updatedAt == request.time && data.updatedBy == request.auth.uid;
+    }
+
+    function validWorkdaySettings(data) {
+      return data.keys().hasOnly([
+          'configured', 'sickAnnualDays', 'personalAnnualDays',
+          'vacationAfter1Year', 'vacationAfter3Years', 'vacationAfter6Years',
+          'vacationAfter9Years', 'vacationAfter12Years', 'vacationAfter15Years',
+          'vacationReference', 'note', 'updatedAt', 'updatedBy'
+        ])
+        && data.configured is bool
+        && data.sickAnnualDays is number && data.sickAnnualDays >= 0 && data.sickAnnualDays <= 365
+        && data.personalAnnualDays is number && data.personalAnnualDays >= 0 && data.personalAnnualDays <= 365
+        && data.vacationAfter1Year is number && data.vacationAfter3Years is number
+        && data.vacationAfter6Years is number && data.vacationAfter9Years is number
+        && data.vacationAfter12Years is number && data.vacationAfter15Years is number
+        && data.vacationAfter1Year >= 0 && data.vacationAfter1Year <= 365
+        && data.vacationAfter3Years >= data.vacationAfter1Year && data.vacationAfter3Years <= 365
+        && data.vacationAfter6Years >= data.vacationAfter3Years && data.vacationAfter6Years <= 365
+        && data.vacationAfter9Years >= data.vacationAfter6Years && data.vacationAfter9Years <= 365
+        && data.vacationAfter12Years >= data.vacationAfter9Years && data.vacationAfter12Years <= 365
+        && data.vacationAfter15Years >= data.vacationAfter12Years && data.vacationAfter15Years <= 365
+        && (data.vacationReference == 'jan1' || data.vacationReference == 'yearEnd')
+        && data.note is string && data.note.size() <= 1000
+        && data.updatedAt == request.time && data.updatedBy == request.auth.uid;
+    }
+
+    function validClosureSummary(summary) {
+      return summary is map
+        && summary.keys().hasOnly([
+          'eligibleEmployeeCount', 'attendanceComplete', 'monthlyComplete',
+          'scoreSyncComplete', 'disciplineComplete', 'gpaIncentiveComplete',
+          'serviceIncentiveComplete', 'monthlyValidationErrors',
+          'monthlyValidationWarnings', 'requiredDone', 'coreReady'
+        ])
+        && summary.eligibleEmployeeCount is int && summary.eligibleEmployeeCount >= 0
+        && summary.attendanceComplete is int && summary.attendanceComplete >= 0
+        && summary.monthlyComplete is int && summary.monthlyComplete >= 0
+        && summary.scoreSyncComplete is int && summary.scoreSyncComplete >= 0
+        && summary.disciplineComplete is int && summary.disciplineComplete >= 0
+        && summary.gpaIncentiveComplete is int && summary.gpaIncentiveComplete >= 0
+        && summary.serviceIncentiveComplete is int && summary.serviceIncentiveComplete >= 0
+        && summary.monthlyValidationErrors is int && summary.monthlyValidationErrors >= 0
+        && summary.monthlyValidationWarnings is int && summary.monthlyValidationWarnings >= 0
+        && summary.requiredDone is int && summary.requiredDone >= 0
+        && summary.coreReady is bool;
+    }
+
+    function validMonthClosure(data) {
+      return data.keys().hasOnly([
+          'yearMonth', 'year', 'month', 'status', 'reason', 'summary', 'version',
+          'createdAt', 'createdBy', 'updatedAt', 'updatedBy', 'finalizedAt',
+          'finalizedBy', 'reopenedAt', 'reopenedBy'
+        ])
+        && validYearMonth(data.yearMonth)
+        && validGregorianYear(data.year)
+        && validMonthOneBased(data.month)
+        && (data.status == 'FINALIZED' || data.status == 'REOPENED')
+        && data.reason is string && data.reason.size() <= 1000
+        && validClosureSummary(data.summary)
+        && data.finalizedAt is timestamp && data.finalizedBy is string
+        && (!('reopenedAt' in data) || data.reopenedAt is timestamp)
+        && (!('reopenedBy' in data) || data.reopenedBy is string)
+        && data.createdAt is timestamp && data.createdBy is string
+        && data.updatedAt == request.time && data.updatedBy == request.auth.uid;
+    }
+
+    function validAuditLog(data) {
+      return data.keys().hasOnly([
+          'actorId', 'action', 'targetType', 'targetId', 'before', 'after', 'createdAt'
+        ])
+        && data.actorId == request.auth.uid
+        && data.action is string && data.action.size() >= 3 && data.action.size() <= 60
+        && data.targetType is string && data.targetType.size() >= 2 && data.targetType.size() <= 40
+        && data.targetId is string && data.targetId.size() <= 160
+        && (data.before == null || data.before is map)
+        && (data.after == null || data.after is map)
+        && data.createdAt == request.time;
+    }
+
     match /profiles/{userId} {
       allow get: if signedIn() && (request.auth.uid == userId || isAdmin());
       allow list: if isAdmin();
@@ -208,7 +492,10 @@ service cloud.firestore {
         && validEmployee(request.resource.data)
         && request.resource.data.createdAt == request.time
         && request.resource.data.createdBy == request.auth.uid;
-      allow update: if isAdmin() && validEmployee(request.resource.data);
+      allow update: if isAdmin()
+        && validEmployee(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.createdBy == resource.data.createdBy;
       allow delete: if isAdmin();
     }
 
@@ -224,22 +511,35 @@ service cloud.firestore {
 
     match /evaluations/{evaluationId} {
       allow read: if hasActiveProfile();
-      allow create: if validEvaluation(request.resource.data)
-        && request.resource.data.createdAt == request.time
-        && request.resource.data.createdBy == request.auth.uid
-        && (isAdmin() || (canEvaluate() && request.resource.data.version == 1));
-      allow update: if validEvaluation(request.resource.data)
+      allow create: if canEvaluate()
+        && validEvaluation(request.resource.data)
+        && versionStartsAtOne(request.resource.data)
+        && validCreateMetadata(request.resource.data)
+        && monthIsEditable(request.resource.data.yearMonth);
+      allow update: if canEvaluate()
+        && validEvaluation(request.resource.data)
         && immutableEvaluationFields()
-        && (isAdmin() || (canEvaluate() && request.resource.data.version == resource.data.version + 1));
-      allow delete: if isAdmin();
+        && versionIncrementsByOne(request.resource.data)
+        && validUpdateMetadata(request.resource.data)
+        && monthIsEditable(request.resource.data.yearMonth);
+      allow delete: if isAdmin() && monthIsEditable(resource.data.yearMonth);
     }
 
     // โมดูลใหม่ Phase 1
     match /serviceIncentives/{incentiveId} {
       allow read: if isAdmin();
-      allow create: if isAdmin() && validServiceIncentive(request.resource.data);
-      allow update: if isAdmin() && validServiceIncentive(request.resource.data) && immutableServiceFields();
-      allow delete: if isAdmin();
+      allow create: if isAdmin()
+        && validServiceIncentive(request.resource.data)
+        && versionStartsAtOne(request.resource.data)
+        && validCreateMetadata(request.resource.data)
+        && monthIsEditable(request.resource.data.yearMonth);
+      allow update: if isAdmin()
+        && validServiceIncentive(request.resource.data)
+        && immutableServiceFields()
+        && versionIncrementsByOne(request.resource.data)
+        && validUpdateMetadata(request.resource.data)
+        && monthIsEditable(request.resource.data.yearMonth);
+      allow delete: if isAdmin() && monthIsEditable(resource.data.yearMonth);
     }
 
     match /hubSettings/{settingId} {
@@ -250,42 +550,123 @@ service cloud.firestore {
       allow delete: if false;
     }
 
-    // เตรียม Collection สำหรับ Phase 2–3 จำกัดเฉพาะ admin จนกว่าจะเพิ่ม Validation เฉพาะโมดูล
     match /attendanceMonthly/{documentId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && validAttendance(request.resource.data)
+        && versionStartsAtOne(request.resource.data)
+        && validCreateMetadata(request.resource.data)
+        && monthIsEditable(request.resource.data.yearMonth);
+      allow update: if isAdmin()
+        && validAttendance(request.resource.data)
+        && request.resource.data.employeeId == resource.data.employeeId
+        && request.resource.data.yearMonth == resource.data.yearMonth
+        && versionIncrementsByOne(request.resource.data)
+        && validUpdateMetadata(request.resource.data)
+        && monthIsEditable(request.resource.data.yearMonth);
+      allow delete: if isAdmin() && monthIsEditable(resource.data.yearMonth);
     }
 
     match /leaveRecords/{documentId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && validLeaveRecord(request.resource.data)
+        && versionStartsAtOne(request.resource.data)
+        && validCreateMetadata(request.resource.data)
+        && monthIsEditable(request.resource.data.yearMonth);
+      allow update: if isAdmin()
+        && validLeaveRecord(request.resource.data)
+        && request.resource.data.createdAt == resource.data.createdAt
+        && request.resource.data.createdBy == resource.data.createdBy
+        && versionIncrementsByOne(request.resource.data)
+        && validUpdateMetadata(request.resource.data)
+        && monthIsEditable(request.resource.data.yearMonth);
+      allow delete: if isAdmin() && monthIsEditable(resource.data.yearMonth);
+    }
+
+    match /workdaySettings/{settingId} {
+      allow read: if isAdmin();
+      allow create, update: if isAdmin()
+        && settingId == 'main'
+        && validWorkdaySettings(request.resource.data);
+      allow delete: if false;
     }
 
     match /dailyPerformanceEntries/{documentId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && validDailyPerformance(request.resource.data)
+        && versionStartsAtOne(request.resource.data)
+        && validCreateMetadata(request.resource.data)
+        && monthlyEntryIsEditable(request.resource.data.yearMonth);
+      allow update: if isAdmin()
+        && validDailyPerformance(request.resource.data)
+        && request.resource.data.employeeId == resource.data.employeeId
+        && request.resource.data.date == resource.data.date
+        && versionIncrementsByOne(request.resource.data)
+        && validUpdateMetadata(request.resource.data)
+        && monthlyEntryIsEditable(request.resource.data.yearMonth);
+      allow delete: if isAdmin() && monthlyEntryIsEditable(resource.data.yearMonth);
     }
 
     match /monthlyPerformanceOverrides/{documentId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && validMonthlyOverride(request.resource.data)
+        && versionStartsAtOne(request.resource.data)
+        && validCreateMetadata(request.resource.data)
+        && monthlyEntryIsEditable(request.resource.data.yearMonth);
+      allow update: if isAdmin()
+        && validMonthlyOverride(request.resource.data)
+        && request.resource.data.employeeId == resource.data.employeeId
+        && request.resource.data.yearMonth == resource.data.yearMonth
+        && versionIncrementsByOne(request.resource.data)
+        && validUpdateMetadata(request.resource.data)
+        && monthlyEntryIsEditable(request.resource.data.yearMonth);
+      allow delete: if isAdmin() && monthlyEntryIsEditable(resource.data.yearMonth);
     }
 
     match /monthlyPerformanceStatus/{documentId} {
-      allow read, write: if isAdmin();
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && validMonthlyStatus(request.resource.data)
+        && versionStartsAtOne(request.resource.data)
+        && validCreateMetadata(request.resource.data)
+        && monthIsEditable(request.resource.data.yearMonth);
+      allow update: if isAdmin()
+        && validMonthlyStatus(request.resource.data)
+        && request.resource.data.yearMonth == resource.data.yearMonth
+        && versionIncrementsByOne(request.resource.data)
+        && validUpdateMetadata(request.resource.data)
+        && monthIsEditable(request.resource.data.yearMonth);
+      allow delete: if false;
+    }
+
+    match /monthClosures/{documentId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin()
+        && validMonthClosure(request.resource.data)
+        && versionStartsAtOne(request.resource.data)
+        && validCreateMetadata(request.resource.data)
+        && request.resource.data.status == 'FINALIZED'
+        && exists(monthlyStatusPath(request.resource.data.yearMonth))
+        && get(monthlyStatusPath(request.resource.data.yearMonth)).data.status == 'CLOSED';
+      allow update: if isAdmin()
+        && validMonthClosure(request.resource.data)
+        && request.resource.data.yearMonth == resource.data.yearMonth
+        && versionIncrementsByOne(request.resource.data)
+        && validUpdateMetadata(request.resource.data)
+        && ((request.resource.data.status == 'REOPENED' && resource.data.status == 'FINALIZED')
+          || (request.resource.data.status == 'FINALIZED'
+            && resource.data.status == 'REOPENED'
+            && exists(monthlyStatusPath(request.resource.data.yearMonth))
+            && get(monthlyStatusPath(request.resource.data.yearMonth)).data.status == 'CLOSED'));
+      allow delete: if false;
     }
 
     match /auditLogs/{logId} {
       allow read: if isAdmin();
-      allow create: if hasActiveProfile()
-        && request.resource.data.keys().hasOnly([
-          'actorId', 'action', 'targetType', 'targetId', 'before', 'after', 'createdAt'
-        ])
-        && request.resource.data.actorId == request.auth.uid
-        && request.resource.data.action is string
-        && request.resource.data.action.size() >= 3
-        && request.resource.data.action.size() <= 60
-        && request.resource.data.targetType is string
-        && request.resource.data.targetType.size() <= 40
-        && request.resource.data.targetId is string
-        && request.resource.data.targetId.size() <= 160
-        && request.resource.data.createdAt == request.time;
+      allow create: if hasActiveProfile() && validAuditLog(request.resource.data);
       allow update, delete: if false;
     }
 

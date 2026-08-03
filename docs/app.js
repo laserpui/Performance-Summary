@@ -1,10 +1,11 @@
 "use strict";
 
+const APP_RELEASE_VERSION = String(window.EMPLOYEE_HUB_FIREBASE_CONFIG?.releaseVersion || '1.0.7');
 const APP_RELEASE = Object.freeze({
   product: "Employee Management Hub",
-  version: "1.0.6",
-  phase: "Monthly Date Navigation",
-  releaseName: "Cross-Month Date Picker · Monthly Performance",
+  version: APP_RELEASE_VERSION,
+  phase: 'Production Hardening',
+  releaseName: 'Firestore Integrity · Atomic Writes · Faster Loading',
   releasedAt: "2026-08-03",
 });
 
@@ -156,7 +157,7 @@ const state = {
   monthlyDataKey: "",
   monthlyLoading: false,
   monthlyTab: "summary",
-  monthlyMonth: new Date().toISOString().slice(0, 7),
+  monthlyMonth: currentYearMonth(),
   monthlyEmployeeId: "",
   monthlyDate: "",
   monthlyEntryStatus: "WORK",
@@ -214,26 +215,35 @@ function escapeHtml(value) {
     .replaceAll("'", "&#039;");
 }
 
+const MONEY_FORMATTER = new Intl.NumberFormat('th-TH', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium', timeStyle: 'short' });
+const DATE_ONLY_FORMATTER = new Intl.DateTimeFormat('th-TH', { dateStyle: 'medium' });
+const NUMBER_FORMATTERS = new Map();
+
 function formatMoney(value) {
-  return new Intl.NumberFormat("th-TH", { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(Number(value) || 0);
+  return MONEY_FORMATTER.format(Number(value) || 0);
 }
 
 function formatDate(value) {
   if (!value) return "-";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return String(value);
-  return new Intl.DateTimeFormat("th-TH", { dateStyle: "medium", timeStyle: "short" }).format(parsed);
+  return DATE_TIME_FORMATTER.format(parsed);
 }
 
 function formatDateOnly(value) {
   if (!value) return "-";
   const parsed = new Date(`${String(value).slice(0, 10)}T00:00:00`);
   if (Number.isNaN(parsed.getTime())) return String(value);
-  return new Intl.DateTimeFormat("th-TH", { dateStyle: "medium" }).format(parsed);
+  return DATE_ONLY_FORMATTER.format(parsed);
 }
 
 function formatNumber(value, maximumFractionDigits = 1) {
-  return new Intl.NumberFormat("th-TH", { maximumFractionDigits }).format(Number(value) || 0);
+  const digits = Math.max(0, Math.min(20, Math.trunc(Number(maximumFractionDigits) || 0)));
+  if (!NUMBER_FORMATTERS.has(digits)) {
+    NUMBER_FORMATTERS.set(digits, new Intl.NumberFormat('th-TH', { maximumFractionDigits: digits }));
+  }
+  return NUMBER_FORMATTERS.get(digits).format(Number(value) || 0);
 }
 
 function currentYearMonth() {
@@ -283,8 +293,15 @@ function sumRecords(records) {
   }), { salesAmount: 0, evaluationAmount: 0, timeAmount: 0, totalAmount: 0 });
 }
 
+let iconRefreshPending = false;
+
 function ensureIcons() {
-  if (window.lucide) window.lucide.createIcons({ attrs: { "stroke-width": 1.9 } });
+  if (!window.lucide || iconRefreshPending) return;
+  iconRefreshPending = true;
+  window.requestAnimationFrame(() => {
+    iconRefreshPending = false;
+    window.lucide?.createIcons({ attrs: { 'stroke-width': 1.9 } });
+  });
 }
 
 function setSyncStatus(status, label) {
@@ -483,7 +500,7 @@ function setVisibleApp(isVisible) {
   els.mobileNav.hidden = !isVisible;
 }
 
-function showView(viewName) {
+function showView(viewName, { updateHash = true } = {}) {
   if (!VIEW_TITLES[viewName]) return;
   state.currentView = viewName;
   els.pageTitle.textContent = VIEW_TITLES[viewName];
@@ -491,10 +508,12 @@ function showView(viewName) {
   document.querySelectorAll(".view").forEach((view) => view.classList.remove("active"));
   document.getElementById(`${viewName}View`)?.classList.add("active");
   document.querySelectorAll("[data-view]").forEach((button) => button.classList.toggle("active", button.dataset.view === viewName));
-  window.location.hash = viewName;
+  if (updateHash && window.location.hash !== '#' + viewName) {
+    window.history.pushState({ view: viewName }, '', '#' + viewName);
+  }
   renderCurrentView();
-  if (viewName === "executive") void refreshExecutiveData({ force: true, quiet: true });
-  if (viewName === "annual") void refreshAnnualData({ force: true, quiet: true });
+  if (viewName === "executive") void refreshExecutiveData({ quiet: true });
+  if (viewName === "annual") void refreshAnnualData({ quiet: true });
   if (viewName === "audit") void refreshAuditData({ quiet: true });
   if (viewName === "performance") void refreshPerformanceData().then(() => {
     if (state.performanceTab === "sync" && !isLegacyAnnualPerformanceYear()) void refreshPerformanceSyncData();
@@ -503,8 +522,8 @@ function showView(viewName) {
   });
   if (viewName === "workday") void refreshWorkdayData();
   if (viewName === "monthly") void refreshMonthlyData();
-  if (viewName === "closing") void refreshClosingData({ force: true, quiet: true });
-  if (viewName === "system") void refreshSystemHealth({ quiet: true });
+  if (viewName === "closing") void refreshClosingData({ quiet: true });
+  if (viewName === "system" && !state.systemHealth) void refreshSystemHealth({ quiet: true });
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -938,25 +957,8 @@ async function refreshAnnualData({ force = false, quiet = false } = {}) {
   state.annualLoading = true;
   if (!quiet) setSyncStatus("syncing", "กำลังสรุปรายงานประจำปี");
   if (state.currentView === "annual") renderAnnualReport();
-  const gregorianYear = annualGregorianYear();
-  const prefix = `${gregorianYear}-`;
   try {
-    const months = Array.from({ length: 12 }, (_, index) => `${gregorianYear}-${String(index + 1).padStart(2, "0")}`);
-    const [evaluations, attendanceAll, leaveRecords, incentivesAll, closures] = await Promise.all([
-      window.EmployeeHubDatabase.loadPerformanceEvaluations(Number(state.annualYear)),
-      window.EmployeeHubDatabase.loadAttendanceMonthly(""),
-      window.EmployeeHubDatabase.loadLeaveRecords(gregorianYear),
-      window.EmployeeHubDatabase.loadServiceIncentives(""),
-      Promise.all(months.map((yearMonth) => window.EmployeeHubDatabase.loadMonthClosure(yearMonth))),
-    ]);
-    state.annualData = {
-      evaluations,
-      attendance: attendanceAll.filter((row) => String(row.yearMonth || "").startsWith(prefix)),
-      leaveRecords: leaveRecords.filter((row) => Number(row.year) === gregorianYear || String(row.yearMonth || "").startsWith(prefix)),
-      incentives: incentivesAll.filter((row) => String(row.yearMonth || "").startsWith(prefix)),
-      closures,
-      months,
-    };
+    state.annualData = await window.EmployeeHubDatabase.loadAnnualSnapshot(Number(state.annualYear));
     state.annualDataKey = key;
     setSyncStatus("online", "เชื่อมต่อแล้ว");
   } catch (error) {
@@ -1515,7 +1517,7 @@ function performanceMonthOptions() {
 }
 
 function performanceTabButton(tab, icon, label) {
-  return `<button class="tab-button ${state.performanceTab === tab ? "active" : ""}" data-performance-tab="${tab}" type="button"><i data-lucide="${icon}"></i><span>${label}</span></button>`;
+  return `<button class="tab-button ${state.performanceTab === tab ? "active" : ""}" data-performance-tab="${tab}" type="button" role="tab" aria-selected="${state.performanceTab === tab}"><i data-lucide="${icon}"></i><span>${label}</span></button>`;
 }
 
 async function refreshPerformanceData({ force = false, quiet = false } = {}) {
@@ -2451,7 +2453,7 @@ function vacationEntitlement(employee, year, settings) {
 }
 
 function workdayTabButton(tab, icon, label) {
-  return `<button class="tab-button ${state.workdayTab === tab ? "active" : ""}" data-workday-tab="${tab}" type="button"><i data-lucide="${icon}"></i><span>${label}</span></button>`;
+  return `<button class="tab-button ${state.workdayTab === tab ? "active" : ""}" data-workday-tab="${tab}" type="button" role="tab" aria-selected="${state.workdayTab === tab}"><i data-lucide="${icon}"></i><span>${label}</span></button>`;
 }
 
 function renderWorkday() {
@@ -2797,7 +2799,7 @@ function openWorkdaySettingsModal() {
   const settings = state.workdaySettings || {};
   els.modalRoot.innerHTML = `
     <div class="modal-backdrop"><section class="modal-card" role="dialog" aria-modal="true" aria-labelledby="workdaySettingsTitle">
-      <div class="modal-head"><div><p class="eyebrow">WORKDAY SETTINGS</p><h2 id="workdaySettingsTitle">ตั้งค่าสิทธิ์วันลา</h2></div><button id="closeModalButton" class="icon-button" type="button"><i data-lucide="x"></i></button></div>
+      <div class="modal-head"><div><p class="eyebrow">WORKDAY SETTINGS</p><h2 id="workdaySettingsTitle">ตั้งค่าสิทธิ์วันลา</h2></div><button id="closeModalButton" class="icon-button" type="button" aria-label="ปิด"><i data-lucide="x"></i></button></div>
       <div class="notice notice-warning"><i data-lucide="triangle-alert"></i><div>กรอกสิทธิลาป่วยและลากิจตามระเบียบบริษัท ส่วนพักร้อนใช้เกณฑ์ที่ได้รับการยืนยันแล้ว</div></div>
       <form id="workdaySettingsForm" style="margin-top:16px">
         <div class="form-grid">
@@ -3102,7 +3104,7 @@ async function refreshMonthlyData({ force = false, quiet = false } = {}) {
 }
 
 function monthlyTabButton(tab, icon, label) {
-  return `<button class="tab-button ${state.monthlyTab === tab ? "active" : ""}" data-monthly-tab="${tab}" type="button"><i data-lucide="${icon}"></i><span>${label}</span></button>`;
+  return `<button class="tab-button ${state.monthlyTab === tab ? "active" : ""}" data-monthly-tab="${tab}" type="button" role="tab" aria-selected="${state.monthlyTab === tab}"><i data-lucide="${icon}"></i><span>${label}</span></button>`;
 }
 
 function renderMonthly() {
@@ -3256,7 +3258,7 @@ function renderMonthlyHistorySection() {
       </div>
       <div class="table-wrap monthly-history-table"><table><thead><tr><th>วันที่</th><th>พนักงาน</th><th>สถานะ</th>${MONTHLY_CRITERIA.map((_, index) => `<th class="money">C${index + 1}</th>`).join("")}<th>หมายเหตุ</th><th>จัดการ</th></tr></thead><tbody>${rows.map((entry) => {
         const employee = employeesById.get(entry.employeeId);
-        return `<tr><td>${formatDateOnly(entry.date)}</td><td><strong>${escapeHtml(employee?.employeeCode || "-")}</strong><span class="table-note">${escapeHtml(employee?.fullName || entry.employeeId)}</span></td><td><span class="badge ${monthlyStatusBadge(entry.status)}">${escapeHtml(monthlyStatusLabel(entry.status))}</span>${entry.legacyException ? `<span class="table-note">มีคะแนนประวัติพิเศษ</span>` : ""}</td>${MONTHLY_CRITERIA.map((criterion) => `<td class="money">${entry.scores?.[criterion.id] === undefined ? "-" : Number(entry.scores[criterion.id]).toFixed(2)}</td>`).join("")}<td>${escapeHtml(entry.note || "-")}</td><td><div class="table-actions"><button class="icon-button edit-monthly-entry" data-id="${escapeHtml(entry.id)}" type="button" title="แก้ไข"><i data-lucide="pencil"></i></button><button class="icon-button danger delete-monthly-entry" data-id="${escapeHtml(entry.id)}" type="button" title="ลบ" ${monthlyIsClosed() ? "disabled" : ""}><i data-lucide="trash-2"></i></button></div></td></tr>`;
+        return `<tr><td>${formatDateOnly(entry.date)}</td><td><strong>${escapeHtml(employee?.employeeCode || "-")}</strong><span class="table-note">${escapeHtml(employee?.fullName || entry.employeeId)}</span></td><td><span class="badge ${monthlyStatusBadge(entry.status)}">${escapeHtml(monthlyStatusLabel(entry.status))}</span>${entry.legacyException ? `<span class="table-note">มีคะแนนประวัติพิเศษ</span>` : ""}</td>${MONTHLY_CRITERIA.map((criterion) => `<td class="money">${entry.scores?.[criterion.id] === undefined ? "-" : Number(entry.scores[criterion.id]).toFixed(2)}</td>`).join("")}<td>${escapeHtml(entry.note || "-")}</td><td><div class="table-actions"><button class="icon-button edit-monthly-entry" data-id="${escapeHtml(entry.id)}" type="button" title="แก้ไข" aria-label="แก้ไขคะแนนรายวัน"><i data-lucide="pencil"></i></button><button class="icon-button danger delete-monthly-entry" data-id="${escapeHtml(entry.id)}" type="button" title="ลบ" aria-label="ลบคะแนนรายวัน" ${monthlyIsClosed() ? "disabled" : ""}><i data-lucide="trash-2"></i></button></div></td></tr>`;
       }).join("") || `<tr><td colspan="11"><div class="empty-state"><i data-lucide="inbox"></i><p>ไม่พบข้อมูลตามตัวกรอง</p></div></td></tr>`}</tbody></table></div>
     </article>`;
 }
@@ -3459,7 +3461,7 @@ function bindMonthlyOverrideEvents() {
 
 function showMonthlyValidationModal(validation) {
   const employeesById = employeeMap();
-  els.modalRoot.innerHTML = `<div class="modal-backdrop"><section class="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="monthlyValidationTitle"><div class="modal-head"><div><p class="eyebrow">MONTH VALIDATION</p><h2 id="monthlyValidationTitle">ผลตรวจเดือน ${escapeHtml(state.monthlyMonth)}</h2></div><button id="closeModalButton" class="icon-button" type="button"><i data-lucide="x"></i></button></div><div class="compact-kpi-grid"><div class="compact-kpi"><span>ข้อผิดพลาด</span><strong>${validation.counts.error}</strong></div><div class="compact-kpi"><span>คำเตือน</span><strong>${validation.counts.warning}</strong></div><div class="compact-kpi"><span>ข้อมูล</span><strong>${validation.counts.info}</strong></div><div class="compact-kpi"><span>ผลตรวจ</span><strong>${validation.passed ? "ผ่าน" : "ไม่ผ่าน"}</strong></div></div>${validation.issues.length ? `<div class="validation-list">${validation.issues.slice(0, 100).map((issue) => { const employee = employeesById.get(issue.details?.employeeId); return `<div class="validation-item validation-${issue.severity.toLowerCase()}"><span>${escapeHtml(issue.severity)}</span><div><strong>${escapeHtml(issue.message)}</strong><small>${employee ? `${escapeHtml(employee.employeeCode)} · ${escapeHtml(employee.fullName)}` : escapeHtml(issue.code)}</small></div></div>`; }).join("")}</div>` : `<div class="notice notice-success"><i data-lucide="circle-check"></i><div>ไม่พบปัญหา</div></div>`}<div class="form-actions"><button id="closeMonthlyValidation" class="button button-primary" type="button">ปิด</button></div></section></div>`;
+  els.modalRoot.innerHTML = `<div class="modal-backdrop"><section class="modal-card modal-wide" role="dialog" aria-modal="true" aria-labelledby="monthlyValidationTitle"><div class="modal-head"><div><p class="eyebrow">MONTH VALIDATION</p><h2 id="monthlyValidationTitle">ผลตรวจเดือน ${escapeHtml(state.monthlyMonth)}</h2></div><button id="closeModalButton" class="icon-button" type="button" aria-label="ปิด"><i data-lucide="x"></i></button></div><div class="compact-kpi-grid"><div class="compact-kpi"><span>ข้อผิดพลาด</span><strong>${validation.counts.error}</strong></div><div class="compact-kpi"><span>คำเตือน</span><strong>${validation.counts.warning}</strong></div><div class="compact-kpi"><span>ข้อมูล</span><strong>${validation.counts.info}</strong></div><div class="compact-kpi"><span>ผลตรวจ</span><strong>${validation.passed ? "ผ่าน" : "ไม่ผ่าน"}</strong></div></div>${validation.issues.length ? `<div class="validation-list">${validation.issues.slice(0, 100).map((issue) => { const employee = employeesById.get(issue.details?.employeeId); return `<div class="validation-item validation-${issue.severity.toLowerCase()}"><span>${escapeHtml(issue.severity)}</span><div><strong>${escapeHtml(issue.message)}</strong><small>${employee ? `${escapeHtml(employee.employeeCode)} · ${escapeHtml(employee.fullName)}` : escapeHtml(issue.code)}</small></div></div>`; }).join("")}</div>` : `<div class="notice notice-success"><i data-lucide="circle-check"></i><div>ไม่พบปัญหา</div></div>`}<div class="form-actions"><button id="closeMonthlyValidation" class="button button-primary" type="button">ปิด</button></div></section></div>`;
   ensureIcons();
   const close = () => { els.modalRoot.innerHTML = ""; };
   document.getElementById("closeModalButton").addEventListener("click", close);
@@ -4446,21 +4448,24 @@ function exportAuditCsv() {
 async function refreshSystemHealth({ quiet = false } = {}) {
   if (!state.user || state.systemLoading) return;
   state.systemLoading = true;
+  let completed = false;
   if (!quiet) setBusy(true, "กำลังตรวจสุขภาพระบบ");
   try {
     const snapshot = await window.EmployeeHubDatabase.loadSystemSnapshot({ includeAuditLogs: false });
     state.systemSnapshot = snapshot;
     state.systemHealth = buildSystemHealth(snapshot);
+    completed = true;
     renderSystem();
     if (!quiet) showToast(state.systemHealth.status === "ok" ? "ตรวจสุขภาพระบบแล้ว ไม่พบปัญหาสำคัญ" : "ตรวจสุขภาพระบบแล้ว กรุณาดูรายการที่พบ", state.systemHealth.status === "error" ? "error" : state.systemHealth.status === "warning" ? "warning" : "success");
   } catch (error) {
     console.error(error);
+    setSyncStatus("error", "ตรวจสุขภาพระบบไม่สำเร็จ");
     showToast(error.message || "ตรวจสุขภาพระบบไม่สำเร็จ", "error");
   } finally {
     state.systemLoading = false;
     state.loading = false;
     els.refreshButton.disabled = false;
-    if (!quiet) setSyncStatus("online", "เชื่อมต่อแล้ว");
+    if (!quiet && completed) setSyncStatus("online", "เชื่อมต่อแล้ว");
   }
 }
 
@@ -4761,6 +4766,15 @@ function bindGlobalEvents() {
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && els.modalRoot.innerHTML) dismissActiveDialog();
   });
+  const syncViewFromLocation = () => {
+    if (!state.user) return;
+    const hashView = window.location.hash.replace('#', '');
+    if (VIEW_TITLES[hashView] && hashView !== state.currentView) {
+      showView(hashView, { updateHash: false });
+    }
+  };
+  window.addEventListener('hashchange', syncViewFromLocation);
+  window.addEventListener('popstate', syncViewFromLocation);
 }
 
 async function bootstrap() {

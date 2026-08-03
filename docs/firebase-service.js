@@ -2,6 +2,7 @@
 
 (function attachEmployeeHubDatabase(global) {
   const CONFIG = global.EMPLOYEE_HUB_FIREBASE_CONFIG || {};
+  const RELEASE_VERSION = String(CONFIG.releaseVersion || '1.0.7');
   const SDK_VERSION = "12.16.0";
   const SDK_BASE = `https://www.gstatic.com/firebasejs/${SDK_VERSION}`;
   const SYSTEM_COLLECTIONS = Object.freeze([
@@ -18,7 +19,7 @@
   let firestoreApi = null;
   let readyError = null;
 
-  // Production v1.0.3: prevent duplicate submissions and skip writes when business data is unchanged.
+  // Production v1.0.7: prevent duplicate submissions and skip writes when business data is unchanged.
   const pendingWriteOperations = new Map();
   let quotaCooldownUntil = 0;
 
@@ -807,25 +808,6 @@
     }
   }
 
-  async function writeMonthlyAuditLog({ action, targetId, before, after }) {
-    const uid = currentUid();
-    try {
-      const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
-      await firestoreApi.setDoc(auditRef, {
-        actorId: uid,
-        action,
-        targetType: "dailyPerformanceEntry",
-        targetId,
-        before: before || null,
-        after: after || null,
-        createdAt: firestoreApi.serverTimestamp(),
-      });
-    } catch (error) {
-      // Audit must not make the business save fail. The write remains protected by admin-only rules.
-      console.warn("บันทึก Audit Log ของ Monthly Performance ไม่สำเร็จ", error);
-    }
-  }
-
   async function saveDailyPerformanceEntry(input) {
     assertReady();
     const uid = currentUid();
@@ -843,7 +825,7 @@
     const expectedVersion = Math.max(0, Math.trunc(Number(input.expectedVersion) || 0));
     const ref = firestoreApi.doc(db, "dailyPerformanceEntries", id);
     const employeeRef = firestoreApi.doc(db, "employees", employeeId);
-    let beforeForAudit = null;
+    const auditRef = firestoreApi.doc(firestoreApi.collection(db, 'auditLogs'));
     let afterForAudit = null;
     let unchanged = false;
 
@@ -868,7 +850,6 @@
         };
         if (sameFields(existing, businessData, Object.keys(businessData))) {
           unchanged = true;
-          beforeForAudit = existing;
           return;
         }
         const payload = {
@@ -884,19 +865,20 @@
           updatedAt: firestoreApi.serverTimestamp(),
           updatedBy: uid,
         };
-        beforeForAudit = existing;
         afterForAudit = { ...payload, createdAt: null, updatedAt: null };
         transaction.set(ref, payload);
+        if (input.skipAudit !== true) {
+          transaction.set(auditRef, {
+            actorId: uid,
+            action: existing ? 'UPDATE_DAILY_PERFORMANCE' : 'CREATE_DAILY_PERFORMANCE',
+            targetType: 'dailyPerformanceEntry',
+            targetId: id,
+            before: existing || null,
+            after: afterForAudit,
+            createdAt: firestoreApi.serverTimestamp(),
+          });
+        }
       });
-
-      if (!unchanged && input.skipAudit !== true) {
-        await writeMonthlyAuditLog({
-          action: beforeForAudit ? "UPDATE_DAILY_PERFORMANCE" : "CREATE_DAILY_PERFORMANCE",
-          targetId: id,
-          before: beforeForAudit,
-          after: afterForAudit,
-        });
-      }
       const saved = monthlyEntryFromSnapshot(await firestoreApi.getDoc(ref));
       return attachWriteMeta(saved, unchanged ? "unchanged" : "written", unchanged ? 0 : (input.skipAudit === true ? 1 : 2));
     } catch (error) {
@@ -908,6 +890,7 @@
 
   async function saveDailyPerformanceEntriesBatch(input) {
     assertReady();
+    const uid = currentUid();
     const employeeIds = [...new Set((Array.isArray(input.employeeIds) ? input.employeeIds : []).map((value) => String(value || "")).filter(Boolean))];
     if (!employeeIds.length || employeeIds.length > 200) throw new Error("จำนวนพนักงานสำหรับบันทึกไม่ถูกต้อง");
     const date = normalizeIsoDate(input.date, "วันที่ประเมิน");
@@ -918,38 +901,84 @@
     if (note.length > 1000) throw new Error("หมายเหตุต้องไม่เกิน 1,000 ตัวอักษร");
 
     try {
-      const existingSnapshots = await firestoreApi.getDocs(
-        firestoreApi.query(firestoreApi.collection(db, "dailyPerformanceEntries"), firestoreApi.where("date", "==", date))
-      );
+      const { yearMonth, year, month } = parseYearMonth(date.slice(0, 7));
+      const [existingSnapshots, employeeSnapshots, closureSnapshot, monthStatusSnapshot] = await Promise.all([
+        firestoreApi.getDocs(
+          firestoreApi.query(firestoreApi.collection(db, 'dailyPerformanceEntries'), firestoreApi.where('date', '==', date))
+        ),
+        Promise.all(employeeIds.map((employeeId) =>
+          firestoreApi.getDoc(firestoreApi.doc(db, 'employees', employeeId))
+        )),
+        firestoreApi.getDoc(firestoreApi.doc(db, 'monthClosures', yearMonth)),
+        firestoreApi.getDoc(firestoreApi.doc(db, 'monthlyPerformanceStatus', yearMonth)),
+      ]);
+      if (closureSnapshot.exists() && String(closureSnapshot.data().status || '') === 'FINALIZED') {
+        const locked = new Error('รอบเดือนนี้ได้รับการรับรองและล็อกแล้ว กรุณาเปิดรอบกลับมาแก้ไขก่อน');
+        locked.code = 'MONTH_FINALIZED';
+        throw locked;
+      }
+      if (monthStatusSnapshot.exists() && String(monthStatusSnapshot.data().status || '') === 'CLOSED') {
+        throw new Error('เดือนนี้ถูกปิดแล้ว กรุณาเปิดเดือนกลับมาแก้ไขก่อน');
+      }
+
       const existing = new Map(existingSnapshots.docs.map((snapshot) => [snapshot.id, snapshot.data()]));
+      const employees = new Map(employeeSnapshots
+        .filter((snapshot) => snapshot.exists())
+        .map((snapshot) => [snapshot.id, snapshot.data()]));
+      employeeIds.forEach((employeeId) => {
+        const employee = employees.get(employeeId);
+        if (!employee) throw new Error('ไม่พบพนักงานที่เลือก');
+        if (employee.isActive === false) throw new Error('มีพนักงานที่ถูกปิดใช้งานในรายการ');
+      });
+
+      const batch = firestoreApi.writeBatch(db);
       const changedIds = [];
       let unchangedCount = 0;
-      for (const employeeId of employeeIds) {
+      employeeIds.forEach((employeeId) => {
         const id = monthlyEntryDocumentId(employeeId, date);
         const before = existing.get(id) || null;
-        const saved = await saveDailyPerformanceEntry({
-          id,
-          employeeId,
-          date,
-          status,
-          note,
-          scores,
-          expectedVersion: Number(before?.version) || 0,
-          legacyException: before?.legacyException === true,
-          skipAudit: true,
-        });
-        if (saved?._writeStatus === "unchanged") unchangedCount += 1;
-        else changedIds.push(employeeId);
+        const legacyException = before?.legacyException === true;
+        const businessData = {
+          employeeId, yearMonth, year, month, date, status,
+          countsAsWork: monthlyStatusCountsAsWork(status),
+          note, scores, legacyException,
+        };
+        if (sameFields(before, businessData, Object.keys(businessData))) {
+          unchangedCount += 1;
+          return;
+        }
+        const payload = {
+          ...businessData,
+          source: String(before?.source || 'Employee Hub / Firebase'),
+          ...(before?.sourceRecordId ? { sourceRecordId: before.sourceRecordId } : {}),
+          ...(Array.isArray(before?.sourceScoreRecordIds) ? { sourceScoreRecordIds: before.sourceScoreRecordIds } : {}),
+          ...(before?.sourceUpdatedAt ? { sourceUpdatedAt: before.sourceUpdatedAt } : {}),
+          ...(before?.importedAt ? { importedAt: before.importedAt } : {}),
+          version: (Number(before?.version) || 0) + 1,
+          createdAt: before?.createdAt || firestoreApi.serverTimestamp(),
+          createdBy: before?.createdBy || uid,
+          updatedAt: firestoreApi.serverTimestamp(),
+          updatedBy: uid,
+        };
+        batch.set(firestoreApi.doc(db, 'dailyPerformanceEntries', id), payload);
+        changedIds.push(employeeId);
+      });
+
+      if (!changedIds.length) {
+        return { count: 0, unchangedCount, total: employeeIds.length, date, estimatedWrites: 0 };
       }
-      if (changedIds.length) {
-        await writeMonthlyAuditLog({
-          action: "BATCH_DAILY_PERFORMANCE",
-          targetId: date,
-          before: null,
-          after: { date, status, changedCount: changedIds.length, unchangedCount, employeeIds: changedIds },
-        });
-      }
-      return { count: changedIds.length, unchangedCount, total: employeeIds.length, date, estimatedWrites: changedIds.length + (changedIds.length ? 1 : 0) };
+      const auditRef = firestoreApi.doc(firestoreApi.collection(db, 'auditLogs'));
+      batch.set(auditRef, {
+        actorId: uid,
+        action: 'BATCH_DAILY_PERFORMANCE',
+        targetType: 'dailyPerformanceEntry',
+        targetId: date,
+        before: null,
+        after: { date, status, changedCount: changedIds.length, unchangedCount, employeeIds: changedIds },
+        createdAt: firestoreApi.serverTimestamp(),
+      });
+      await batch.commit();
+      return { count: changedIds.length, unchangedCount, total: employeeIds.length, date, estimatedWrites: changedIds.length + 1 };
     } catch (error) {
       throw friendlyError(error, "บันทึกคะแนนพนักงานทุกคนไม่สำเร็จ");
     }
@@ -1165,19 +1194,37 @@
     }
   }
 
+  async function loadLatestServiceIncentives() {
+    assertReady();
+    try {
+      const latestQuery = firestoreApi.query(
+        firestoreApi.collection(db, 'serviceIncentives'),
+        firestoreApi.orderBy('yearMonth', 'desc'),
+        firestoreApi.limit(1)
+      );
+      const latestSnapshot = await firestoreApi.getDocs(latestQuery);
+      if (latestSnapshot.empty) return [];
+      return loadServiceIncentives(String(latestSnapshot.docs[0].data().yearMonth || ''));
+    } catch (error) {
+      throw friendlyError(error, 'อ่านข้อมูล Service Incentive ล่าสุดไม่สำเร็จ');
+    }
+  }
+
   async function loadEvaluationSummary() {
     assertReady();
     try {
-      const snapshots = await firestoreApi.getDocs(firestoreApi.collection(db, "evaluations"));
-      const years = new Set();
-      let latest = "";
-      snapshots.docs.forEach((snapshot) => {
-        const row = snapshot.data();
-        if (Number.isFinite(Number(row.year))) years.add(Number(row.year));
-        const updated = toIso(row.updatedAt);
-        if (updated > latest) latest = updated;
-      });
-      return { count: snapshots.size, years: [...years].sort((a, b) => a - b), latestUpdatedAt: latest };
+      const collectionRef = firestoreApi.collection(db, 'evaluations');
+      const [countSnapshot, latestSnapshot, settings] = await Promise.all([
+        firestoreApi.getCountFromServer(collectionRef),
+        firestoreApi.getDocs(firestoreApi.query(collectionRef, firestoreApi.orderBy('updatedAt', 'desc'), firestoreApi.limit(1))),
+        loadPerformanceSettings(),
+      ]);
+      const latestUpdatedAt = latestSnapshot.empty ? '' : toIso(latestSnapshot.docs[0].data().updatedAt);
+      return {
+        count: Number(countSnapshot.data().count) || 0,
+        years: [...new Set((settings.years || []).map(Number).filter(Number.isFinite))].sort((a, b) => a - b),
+        latestUpdatedAt,
+      };
     } catch (error) {
       throw friendlyError(error, "อ่านสรุป Performance Summary ไม่สำเร็จ");
     }
@@ -1229,23 +1276,6 @@
     }
   }
 
-  async function writePerformanceAuditLog({ action, targetId, before, after }) {
-    try {
-      const uid = currentUid();
-      await firestoreApi.addDoc(firestoreApi.collection(db, "auditLogs"), {
-        actorId: uid,
-        action,
-        targetType: "evaluation",
-        targetId: String(targetId || ""),
-        before: before || null,
-        after: after || null,
-        createdAt: firestoreApi.serverTimestamp(),
-      });
-    } catch (error) {
-      console.warn("บันทึก Performance Audit Log ไม่สำเร็จ", error);
-    }
-  }
-
   async function savePerformanceEvaluation(input) {
     assertReady();
     const uid = currentUid();
@@ -1264,6 +1294,7 @@
     const id = performanceEvaluationId(year, employeeId, month);
     const ref = firestoreApi.doc(db, "evaluations", id);
     const employeeRef = firestoreApi.doc(db, "employees", employeeId);
+    const auditRef = firestoreApi.doc(firestoreApi.collection(db, 'auditLogs'));
     let before = null;
     let unchanged = false;
     try {
@@ -1297,18 +1328,27 @@
           return;
         }
         before = existing ? { ...existing, createdAt: null, updatedAt: null } : null;
-        transaction.set(ref, {
+        const payload = {
           ...businessData,
           version: currentVersion + 1,
           createdAt: existing?.createdAt || firestoreApi.serverTimestamp(),
           createdBy: existing?.createdBy || uid,
           updatedAt: firestoreApi.serverTimestamp(),
           updatedBy: uid,
+        };
+        transaction.set(ref, payload);
+        transaction.set(auditRef, {
+          actorId: uid,
+          action: existing ? 'UPDATE_EVALUATION' : 'CREATE_EVALUATION',
+          targetType: 'evaluation',
+          targetId: id,
+          before,
+          after: { ...businessData, version: payload.version, createdAt: null, updatedAt: null },
+          createdAt: firestoreApi.serverTimestamp(),
         });
       });
       const savedSnapshot = await firestoreApi.getDoc(ref);
       const saved = performanceEvaluationFromSnapshot(savedSnapshot);
-      if (!unchanged) await writePerformanceAuditLog({ action: before ? "UPDATE_EVALUATION" : "CREATE_EVALUATION", targetId: id, before, after: { ...saved, updatedAt: null } });
       return attachWriteMeta(saved, unchanged ? "unchanged" : "written", unchanged ? 0 : 2);
     } catch (error) {
       if (error?.code === "VERSION_CONFLICT") throw error;
@@ -1363,6 +1403,7 @@
     const id = performanceEvaluationId(year, employeeId, month);
     const ref = firestoreApi.doc(db, "evaluations", id);
     const employeeRef = firestoreApi.doc(db, "employees", employeeId);
+    const auditRef = firestoreApi.doc(firestoreApi.collection(db, 'auditLogs'));
     let before = null;
     let unchanged = false;
     try {
@@ -1391,7 +1432,7 @@
           return;
         }
         before = existing ? { ...existing, createdAt: null, updatedAt: null } : null;
-        transaction.set(ref, {
+        const payload = {
           employeeId,
           yearMonth: parsed.yearMonth,
           year,
@@ -1415,11 +1456,20 @@
           createdBy: existing?.createdBy || uid,
           updatedAt: firestoreApi.serverTimestamp(),
           updatedBy: uid,
+        };
+        transaction.set(ref, payload);
+        transaction.set(auditRef, {
+          actorId: uid,
+          action: 'SYNC_MONTHLY_TO_PERFORMANCE_SUMMARY',
+          targetType: 'evaluation',
+          targetId: id,
+          before,
+          after: { ...payload, createdAt: null, updatedAt: null },
+          createdAt: firestoreApi.serverTimestamp(),
         });
       });
       const savedSnapshot = await firestoreApi.getDoc(ref);
       const saved = performanceEvaluationFromSnapshot(savedSnapshot);
-      if (!unchanged) await writePerformanceAuditLog({ action: "SYNC_MONTHLY_TO_PERFORMANCE_SUMMARY", targetId: id, before, after: { ...saved, updatedAt: null } });
       return attachWriteMeta(saved, unchanged ? "unchanged" : "written", unchanged ? 0 : 2);
     } catch (error) {
       if (error?.code === "VERSION_CONFLICT") throw error;
@@ -1656,6 +1706,49 @@
     }
   }
 
+  async function loadAnnualSnapshot(thaiYear) {
+    assertReady();
+    const normalizedThaiYear = Math.trunc(Number(thaiYear));
+    if (!Number.isInteger(normalizedThaiYear) || normalizedThaiYear < 2500 || normalizedThaiYear > 3000) {
+      throw new Error('ปีรายงานไม่ถูกต้อง');
+    }
+    const gregorianYear = normalizedThaiYear - 543;
+    const months = Array.from({ length: 12 }, (_, index) => gregorianYear + '-' + String(index + 1).padStart(2, '0'));
+    try {
+      const [evaluations, attendanceSnapshot, leaveRecords, incentivesSnapshot, closureSnapshot] = await Promise.all([
+        loadPerformanceEvaluations(normalizedThaiYear),
+        firestoreApi.getDocs(firestoreApi.query(
+          firestoreApi.collection(db, 'attendanceMonthly'),
+          firestoreApi.where('year', '==', gregorianYear)
+        )),
+        loadLeaveRecords(gregorianYear),
+        firestoreApi.getDocs(firestoreApi.query(
+          firestoreApi.collection(db, 'serviceIncentives'),
+          firestoreApi.where('year', '==', gregorianYear)
+        )),
+        firestoreApi.getDocs(firestoreApi.query(
+          firestoreApi.collection(db, 'monthClosures'),
+          firestoreApi.where('year', '==', gregorianYear)
+        )),
+      ]);
+      const attendance = attendanceSnapshot.docs.map(attendanceFromSnapshot)
+        .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth) || a.employeeId.localeCompare(b.employeeId));
+      const incentives = incentivesSnapshot.docs.map(incentiveFromSnapshot)
+        .sort((a, b) => b.yearMonth.localeCompare(a.yearMonth) || a.employeeId.localeCompare(b.employeeId));
+      const closureMap = new Map(closureSnapshot.docs.map((snapshot) => {
+        const closure = monthClosureFromSnapshot(snapshot, snapshot.id);
+        return [closure.yearMonth, closure];
+      }));
+      const closures = months.map((yearMonth) => closureMap.get(yearMonth) || {
+        id: yearMonth, yearMonth, status: 'OPEN', reason: '', summary: {}, version: 0,
+        updatedAt: '', finalizedAt: '', reopenedAt: '', finalizedBy: '', reopenedBy: '',
+      });
+      return { evaluations, attendance, leaveRecords, incentives, closures, months };
+    } catch (error) {
+      throw friendlyError(error, 'โหลดรายงานประจำปีไม่สำเร็จ');
+    }
+  }
+
 
   function productionReleaseFromSnapshot(snapshot) {
     if (!snapshot?.exists()) return null;
@@ -1691,7 +1784,7 @@
     assertReady();
     const uid = currentUid();
     const releaseVersion = String(input.releaseVersion || "").trim();
-    if (releaseVersion !== "1.0.3") throw new Error("รองรับการรับรอง Production v1.0.3 เท่านั้น");
+    if (releaseVersion !== RELEASE_VERSION) throw new Error('รองรับการรับรอง Production v' + RELEASE_VERSION + ' เท่านั้น');
 
     const requiredManualKeys = ["workflow", "exports", "responsive", "backupStored", "legacyReadOnly"];
     const manualChecks = Object.fromEntries(requiredManualKeys.map((key) => [key, input.manualChecks?.[key] === true]));
@@ -1757,7 +1850,7 @@
     try {
       const [employees, incentives, evaluationSummary, migrationStatus, productionRelease] = await Promise.all([
         loadEmployees(),
-        loadServiceIncentives(yearMonth),
+        yearMonth ? loadServiceIncentives(yearMonth) : loadLatestServiceIncentives(),
         loadEvaluationSummary(),
         getMigrationStatus(),
         loadProductionRelease(),
@@ -2206,6 +2299,7 @@
     loadLeaveRecords,
     loadWorkdaySettings,
     loadWorkdaySnapshot,
+    loadAnnualSnapshot,
     saveEmployee: (input) => runWriteOnce(`saveEmployee:${input?.id || normalizeName(input?.fullName || "new")}`, () => saveEmployee(input)),
     saveServiceIncentive: (input) => runWriteOnce(`saveServiceIncentive:${input?.employeeId || ""}:${input?.yearMonth || ""}`, () => saveServiceIncentive(input)),
     deleteServiceIncentive: (documentId) => runWriteOnce(`deleteServiceIncentive:${documentId}`, () => deleteServiceIncentive(documentId)),
