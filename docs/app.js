@@ -2,10 +2,10 @@
 
 const APP_RELEASE = Object.freeze({
   product: "Employee Management Hub",
-  version: "1.0.5",
-  phase: "Workday Leave Date Default",
-  releaseName: "Current Date Default · Leave Form",
-  releasedAt: "2026-07-27",
+  version: "1.0.6",
+  phase: "Monthly Date Navigation",
+  releaseName: "Cross-Month Date Picker · Monthly Performance",
+  releasedAt: "2026-08-03",
 });
 
 const RELEASE_MANUAL_CHECKS = Object.freeze([
@@ -2908,6 +2908,36 @@ function monthlyDefaultDate() {
   return today.startsWith(state.monthlyMonth) ? today : `${state.monthlyMonth}-01`;
 }
 
+function monthlyMonthFromDate(dateValue) {
+  const value = String(dateValue || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? value.slice(0, 7) : "";
+}
+
+async function applyMonthlyDateSelection(dateValue, { history = false } = {}) {
+  const selectedDate = String(dateValue || "").trim();
+  const selectedMonth = monthlyMonthFromDate(selectedDate);
+  if (!selectedMonth) return;
+
+  if (history) state.monthlyHistoryDate = selectedDate;
+  else state.monthlyDate = selectedDate;
+  state.monthlyEditingId = "";
+
+  if (selectedMonth !== state.monthlyMonth) {
+    state.monthlyMonth = selectedMonth;
+    state.monthlyDataKey = "";
+    state.monthlyEntries = [];
+    state.monthlyOverrides = [];
+    state.monthlyStatus = { status: "OPEN" };
+    state.monthlyLoading = true;
+    renderMonthly();
+    await refreshMonthlyData({ force: true });
+    showToast(`เปลี่ยนเดือนประเมินเป็น ${selectedMonth} ตามวันที่ที่เลือกแล้ว`, "info");
+    return;
+  }
+
+  renderMonthly();
+}
+
 function monthlyEntryById(id) {
   return state.monthlyEntries.find((entry) => entry.id === id) || null;
 }
@@ -3059,6 +3089,7 @@ async function refreshMonthlyData({ force = false, quiet = false } = {}) {
     state.monthlyStatus = snapshot.monthStatus;
     state.monthlyDataKey = key;
     if (!state.monthlyDate || !state.monthlyDate.startsWith(state.monthlyMonth)) state.monthlyDate = monthlyDefaultDate();
+    if (state.monthlyHistoryDate && !state.monthlyHistoryDate.startsWith(state.monthlyMonth)) state.monthlyHistoryDate = "";
     setSyncStatus("online", "เชื่อมต่อแล้ว");
     if (state.currentView === "monthly") renderMonthly();
   } catch (error) {
@@ -3188,7 +3219,7 @@ function renderMonthlyEntrySection() {
         ${locked ? `<div class="notice notice-warning"><i data-lucide="lock-keyhole"></i><div>เดือนนี้ถูกปิดแล้ว ต้องเปิดเดือนกลับมาแก้ไขก่อน</div></div>` : ""}
         <form id="monthlyEntryForm">
           <div class="form-grid">
-            <div class="field"><label for="monthlyEntryDate">วันที่</label><input id="monthlyEntryDate" type="date" min="${state.monthlyMonth}-01" max="${state.monthlyMonth}-31" value="${escapeHtml(selectedDate)}" required ${locked ? "disabled" : ""} /></div>
+            <div class="field"><label for="monthlyEntryDate">วันที่</label><input id="monthlyEntryDate" type="date" value="${escapeHtml(selectedDate)}" required ${locked ? "disabled" : ""} /><span class="field-help">เลือกวันย้อนหลังได้ ระบบจะเปลี่ยนเดือนประเมินให้ตรงกับวันที่โดยอัตโนมัติ</span></div>
             <div class="field"><label for="monthlyEntryEmployee">พนักงาน</label><select id="monthlyEntryEmployee" required ${editing || locked ? "disabled" : ""}>${monthlyEmployeeOptions(selectedEmployeeId, !editing)}</select></div>
             <div class="field"><label for="monthlyEntryStatus">สถานะ</label><select id="monthlyEntryStatus" required ${locked ? "disabled" : ""}>${MONTHLY_STATUSES.map((status) => `<option value="${status.id}" ${status.id === selectedStatus ? "selected" : ""}>${escapeHtml(status.name)}</option>`).join("")}</select></div>
             <div class="field"><label>คะแนนนอกวันทำงาน</label><label class="check-field"><input id="monthlyOffDayPerformance" type="checkbox" ${offDayPerformance ? "checked" : ""} ${selectedDefinition.countsAsWork || locked ? "disabled" : ""} /> ทำคะแนนในวันลา/วันหยุด</label></div>
@@ -3220,7 +3251,7 @@ function renderMonthlyHistorySection() {
       <div class="panel-head"><div><h2>รายการข้อมูลรายวัน</h2><p>${rows.length} จาก ${state.monthlyEntries.length} รายการในเดือน ${escapeHtml(state.monthlyMonth)}</p></div><button id="exportMonthlyEntriesButton" class="button button-secondary button-small" type="button"><i data-lucide="download"></i>Export CSV</button></div>
       <div class="toolbar monthly-filter-toolbar">
         <div class="field compact-field"><label for="monthlyHistoryEmployee">พนักงาน</label><select id="monthlyHistoryEmployee"><option value="">ทุกคน</option>${monthlyEmployeeOptions(state.monthlyHistoryEmployeeId)}</select></div>
-        <div class="field compact-field"><label for="monthlyHistoryDate">วันที่</label><input id="monthlyHistoryDate" type="date" min="${state.monthlyMonth}-01" max="${state.monthlyMonth}-31" value="${escapeHtml(state.monthlyHistoryDate)}" /></div>
+        <div class="field compact-field"><label for="monthlyHistoryDate">วันที่</label><input id="monthlyHistoryDate" type="date" value="${escapeHtml(state.monthlyHistoryDate)}" /></div>
         <button id="clearMonthlyHistoryFilter" class="button button-ghost button-small" type="button"><i data-lucide="x"></i>ล้างตัวกรอง</button>
       </div>
       <div class="table-wrap monthly-history-table"><table><thead><tr><th>วันที่</th><th>พนักงาน</th><th>สถานะ</th>${MONTHLY_CRITERIA.map((_, index) => `<th class="money">C${index + 1}</th>`).join("")}<th>หมายเหตุ</th><th>จัดการ</th></tr></thead><tbody>${rows.map((entry) => {
@@ -3289,7 +3320,7 @@ function bindMonthlyEntryEvents() {
   const statusSelect = document.getElementById("monthlyEntryStatus");
   const offDayCheckbox = document.getElementById("monthlyOffDayPerformance");
   employeeSelect?.addEventListener("change", () => { state.monthlyEmployeeId = employeeSelect.value; state.monthlyEditingId = ""; renderMonthly(); });
-  dateInput?.addEventListener("change", () => { state.monthlyDate = dateInput.value; state.monthlyEditingId = ""; renderMonthly(); });
+  dateInput?.addEventListener("change", () => { void applyMonthlyDateSelection(dateInput.value); });
   statusSelect?.addEventListener("change", () => { state.monthlyEntryStatus = statusSelect.value; updateMonthlyScoreState(); });
   offDayCheckbox?.addEventListener("change", updateMonthlyScoreState);
   document.getElementById("clearMonthlyEntryForm")?.addEventListener("click", () => {
@@ -3356,7 +3387,7 @@ function bindMonthlyEntryEvents() {
 
 function bindMonthlyHistoryEvents() {
   document.getElementById("monthlyHistoryEmployee")?.addEventListener("change", (event) => { state.monthlyHistoryEmployeeId = event.target.value; renderMonthly(); });
-  document.getElementById("monthlyHistoryDate")?.addEventListener("change", (event) => { state.monthlyHistoryDate = event.target.value; renderMonthly(); });
+  document.getElementById("monthlyHistoryDate")?.addEventListener("change", (event) => { void applyMonthlyDateSelection(event.target.value, { history: true }); });
   document.getElementById("clearMonthlyHistoryFilter")?.addEventListener("click", () => { state.monthlyHistoryEmployeeId = ""; state.monthlyHistoryDate = ""; renderMonthly(); });
   document.getElementById("exportMonthlyEntriesButton")?.addEventListener("click", exportMonthlyEntriesCsv);
   els.monthlyView.querySelectorAll(".edit-monthly-entry").forEach((button) => button.addEventListener("click", () => {
