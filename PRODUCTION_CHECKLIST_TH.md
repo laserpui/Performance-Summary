@@ -1,4 +1,4 @@
-# Production Checklist — Employee Management Hub v1.0.10
+# Production Checklist — Employee Management Hub v1.0.11
 
 เอกสารนี้ใช้ก่อนนำไฟล์ในโฟลเดอร์ `docs` และ Firestore rules ขึ้นระบบจริง
 
@@ -13,7 +13,7 @@ node --check docs/firebase-config.js
 node tests/verify-regressions.mjs
 ```
 
-ผล regression check ต้องขึ้น `PASS 8 regression groups`
+ผล regression check ต้องขึ้น `PASS 11 regression groups`
 
 ## ลำดับการนำขึ้น Firebase
 
