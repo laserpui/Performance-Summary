@@ -1,11 +1,11 @@
 "use strict";
 
-const APP_RELEASE_VERSION = String(window.EMPLOYEE_HUB_FIREBASE_CONFIG?.releaseVersion || '1.0.12');
+const APP_RELEASE_VERSION = String(window.EMPLOYEE_HUB_FIREBASE_CONFIG?.releaseVersion || '1.0.13');
 const APP_RELEASE = Object.freeze({
   product: "Employee Management Hub",
   version: APP_RELEASE_VERSION,
   phase: 'Production Hardening',
-  releaseName: 'Workday Leave Sync & Monthly Score Colors',
+  releaseName: 'Monthly Employee Column Restore',
   releasedAt: "2026-08-05",
 });
 
@@ -3325,8 +3325,8 @@ function applyMonthlyHistoryScoreColors() {
 }
 
 
-  const employeesById = employeeMap();
 function renderMonthlyHistorySection() {
+  const employeesById = employeeMap();
   const rows = state.monthlyEntries
     .filter((entry) => !state.monthlyHistoryEmployeeId || entry.employeeId === state.monthlyHistoryEmployeeId)
     .filter((entry) => !state.monthlyHistoryDate || entry.date === state.monthlyHistoryDate)

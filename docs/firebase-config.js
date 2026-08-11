@@ -1,7 +1,7 @@
 "use strict";
 
 window.EMPLOYEE_HUB_FIREBASE_CONFIG = Object.freeze({
-  releaseVersion: "1.0.12",
+  releaseVersion: "1.0.13",
   apiKey: "AIzaSyBWhhjpHjaSsKbgLiYtHl7cndQoVgFC43Y",
   authDomain: "performance-summary-62d48.firebaseapp.com",
   projectId: "performance-summary-62d48",

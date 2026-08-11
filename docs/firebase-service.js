@@ -2,7 +2,7 @@
 
 (function attachEmployeeHubDatabase(global) {
   const CONFIG = global.EMPLOYEE_HUB_FIREBASE_CONFIG || {};
-  const RELEASE_VERSION = String(CONFIG.releaseVersion || '1.0.12');
+  const RELEASE_VERSION = String(CONFIG.releaseVersion || '1.0.13');
   const SDK_VERSION = "12.16.0";
   const SDK_BASE = `https://www.gstatic.com/firebasejs/${SDK_VERSION}`;
   const SYSTEM_COLLECTIONS = Object.freeze([
@@ -19,7 +19,7 @@
   let firestoreApi = null;
   let readyError = null;
 
-  // Production v1.0.12: atomic Workday leave sync and duplicate-write protection.
+  // Production v1.0.13: restore live Employee Master mapping in Monthly history.
   const pendingWriteOperations = new Map();
   let quotaCooldownUntil = 0;
 
