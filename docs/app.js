@@ -1,11 +1,11 @@
 "use strict";
 
-const APP_RELEASE_VERSION = String(window.EMPLOYEE_HUB_FIREBASE_CONFIG?.releaseVersion || '1.0.11');
+const APP_RELEASE_VERSION = String(window.EMPLOYEE_HUB_FIREBASE_CONFIG?.releaseVersion || '1.0.12');
 const APP_RELEASE = Object.freeze({
   product: "Employee Management Hub",
   version: APP_RELEASE_VERSION,
   phase: 'Production Hardening',
-  releaseName: 'Monthly Performance Summary CSV Export',
+  releaseName: 'Workday Leave Sync & Monthly Score Colors',
   releasedAt: "2026-08-05",
 });
 
@@ -60,6 +60,7 @@ const MONTHLY_STATUSES = Object.freeze([
   { id: "SICK_LEAVE", name: "ลาป่วย", countsAsWork: false },
   { id: "PERSONAL_LEAVE", name: "ลากิจ", countsAsWork: false },
   { id: "VACATION", name: "พักร้อน", countsAsWork: false },
+  { id: "OTHER_LEAVE", name: "\u0e25\u0e32\u0e2d\u0e37\u0e48\u0e19\u0e46", countsAsWork: false },
   { id: "COMP_OFF", name: "ชดเชย", countsAsWork: false },
   { id: "HOLIDAY", name: "วันหยุด", countsAsWork: false },
 ]);
@@ -2805,6 +2806,7 @@ function bindLeaveEvents() {
       state.workdayYear = result.year;
       state.leaveEditingId = "";
       state.workdayDataKey = "";
+      state.monthlyDataKey = "";
       await refreshWorkdayData({ force: true, quiet: true });
     } catch (error) {
       if (error.code === "VERSION_CONFLICT") showToast("ข้อมูลวันลาเปลี่ยนแล้ว กรุณาโหลดใหม่", "warning");
@@ -2837,6 +2839,7 @@ function bindLeaveEvents() {
       showToast("ลบวันลาแล้ว");
       if (state.leaveEditingId === record.id) state.leaveEditingId = "";
       state.workdayDataKey = "";
+      state.monthlyDataKey = "";
       await refreshWorkdayData({ force: true, quiet: true });
     } catch (error) { showToast(error.message, "error"); }
   }));
@@ -2951,6 +2954,7 @@ function monthlyStatusBadge(statusId) {
     SICK_LEAVE: "badge-danger",
     PERSONAL_LEAVE: "badge-progress",
     VACATION: "badge-ready",
+    OTHER_LEAVE: "badge-progress",
     COMP_OFF: "badge-planned",
     HOLIDAY: "badge-planned",
   };
@@ -3214,6 +3218,7 @@ function renderMonthly() {
     state.monthlyEditingId = "";
     renderMonthly();
   }));
+  applyMonthlyHistoryScoreColors();
   bindMonthlyTabEvents();
   ensureIcons();
 }
@@ -3307,8 +3312,21 @@ function renderMonthlyEntrySection() {
     </div>`;
 }
 
-function renderMonthlyHistorySection() {
+function applyMonthlyHistoryScoreColors() {
+  document.querySelectorAll(".monthly-history-table tbody tr").forEach((row) => {
+    MONTHLY_CRITERIA.forEach((criterion, index) => {
+      const cell = row.cells[index + 3];
+      const score = Number(cell?.textContent);
+      if (!cell || !Number.isFinite(score)) return;
+      cell.classList.toggle("score-good", score > criterion.normalScore);
+      cell.classList.toggle("score-low", score < criterion.normalScore);
+    });
+  });
+}
+
+
   const employeesById = employeeMap();
+function renderMonthlyHistorySection() {
   const rows = state.monthlyEntries
     .filter((entry) => !state.monthlyHistoryEmployeeId || entry.employeeId === state.monthlyHistoryEmployeeId)
     .filter((entry) => !state.monthlyHistoryDate || entry.date === state.monthlyHistoryDate)
