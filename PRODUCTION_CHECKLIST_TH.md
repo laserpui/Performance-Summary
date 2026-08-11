@@ -1,4 +1,4 @@
-# Production Checklist — Employee Management Hub v1.0.11
+# Production Checklist — Employee Management Hub v1.0.12
 
 เอกสารนี้ใช้ก่อนนำไฟล์ในโฟลเดอร์ `docs` และ Firestore rules ขึ้นระบบจริง
 

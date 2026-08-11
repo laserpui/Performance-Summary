@@ -342,7 +342,7 @@ service cloud.firestore {
         && validIsoDate(data.date)
         && (data.status == 'WORK' || data.status == 'WEEKEND_WORK'
           || data.status == 'SICK_LEAVE' || data.status == 'PERSONAL_LEAVE'
-          || data.status == 'VACATION' || data.status == 'COMP_OFF'
+          || data.status == 'VACATION' || data.status == 'OTHER_LEAVE' || data.status == 'COMP_OFF'
           || data.status == 'HOLIDAY')
         && data.countsAsWork == (data.status == 'WORK' || data.status == 'WEEKEND_WORK')
         && data.note is string && data.note.size() <= 1000
