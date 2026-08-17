@@ -617,62 +617,126 @@
     return String(note || "").trim().slice(0, 1000);
   }
 
+  function addIsoDays(date, offset) {
+    const cursor = new Date(`${date}T00:00:00Z`);
+    cursor.setUTCDate(cursor.getUTCDate() + offset);
+    return cursor.toISOString().slice(0, 10);
+  }
+
+  function leaveCoveredDates(startDate, days, excludeHolidays = false) {
+    const dates = [];
+    let remainingHalfDays = Math.max(0, Math.round(Number(days) * 2));
+    let offset = 0;
+    while (remainingHalfDays > 0) {
+      const date = addIsoDays(startDate, offset);
+      offset += 1;
+      const dayOfWeek = new Date(`${date}T00:00:00Z`).getUTCDay();
+      if (excludeHolidays && (dayOfWeek === 0 || dayOfWeek === 6)) continue;
+      dates.push(date);
+      remainingHalfDays -= Math.min(2, remainingHalfDays);
+    }
+    return dates;
+  }
+
   async function syncLeaveToMonthlyPerformance(transaction, input) {
-    const { uid, leaveId, employeeId, date, leaveType, days, note, existingLeave } = input;
-    const { yearMonth, year, month } = parseYearMonth(date.slice(0, 7));
-    const targetRef = firestoreApi.doc(db, "dailyPerformanceEntries", monthlyEntryDocumentId(employeeId, date));
+    const { uid, leaveId, employeeId, date, leaveType, days, note, excludeHolidays, existingLeave } = input;
+    const targetDates = leaveCoveredDates(date, days, excludeHolidays);
     const previousEmployeeId = String(existingLeave?.employeeId || "");
-    const previousDate = String(existingLeave?.date || "");
-    const previousYearMonth = String(existingLeave?.yearMonth || previousDate.slice(0, 7));
-    const previousRef = previousEmployeeId && previousDate
-      ? firestoreApi.doc(db, "dailyPerformanceEntries", monthlyEntryDocumentId(previousEmployeeId, previousDate))
-      : null;
-    const moved = Boolean(previousRef && previousRef.path !== targetRef.path);
-
-    if (moved && previousYearMonth && previousYearMonth !== yearMonth) {
-      await ensureMonthlyMonthEditable(transaction, previousYearMonth);
-    }
-    const targetSnapshot = await transaction.get(targetRef);
-    const previousSnapshot = moved ? await transaction.get(previousRef) : null;
-    const existingTarget = targetSnapshot.exists() ? targetSnapshot.data() : null;
-    if (existingTarget && String(existingTarget.sourceRecordId || "") !== leaveId) {
-      throw new Error("Monthly Performance มีข้อมูลของพนักงานในวันที่เลือกอยู่แล้ว กรุณาตรวจสอบหรือลบรายการเดิมก่อน");
-    }
-    if (moved && previousSnapshot?.exists() && String(previousSnapshot.data().sourceRecordId || "") === leaveId
-        && Object.keys(previousSnapshot.data().scores || {}).length) {
-      throw new Error("รายการ Monthly Performance ที่เชื่อมไว้มีคะแนน กรุณาลบคะแนนก่อนเปลี่ยนพนักงานหรือวันที่ลา");
-    }
-
-    const businessData = {
-      employeeId, yearMonth, year, month, date,
-      status: monthlyStatusFromLeaveType(leaveType),
-      countsAsWork: false,
-      note: monthlyLeaveSyncNote(leaveType, days, note),
-      scores: existingTarget?.scores && typeof existingTarget.scores === "object" ? existingTarget.scores : {},
-      legacyException: Boolean(existingTarget?.legacyException),
+    const previousDates = existingLeave
+      ? leaveCoveredDates(String(existingLeave.date || ""), Number(existingLeave.days) || 0, existingLeave.excludeHolidays === true)
+      : [];
+    const affected = new Map();
+    const addAffected = (affectedEmployeeId, affectedDate) => {
+      if (!affectedEmployeeId || !affectedDate) return;
+      const ref = firestoreApi.doc(db, "dailyPerformanceEntries", monthlyEntryDocumentId(affectedEmployeeId, affectedDate));
+      affected.set(ref.path, { employeeId: affectedEmployeeId, date: affectedDate, ref });
     };
-    const unchanged = sameFields(existingTarget, businessData, Object.keys(businessData))
-      && String(existingTarget?.source || "") === "Workday Insight"
-      && String(existingTarget?.sourceRecordId || "") === leaveId
-      && !moved;
-    if (unchanged) return { changed: false };
+    targetDates.forEach((targetDate) => addAffected(employeeId, targetDate));
+    previousDates.forEach((previousDate) => addAffected(previousEmployeeId, previousDate));
 
-    const payload = {
-      ...businessData,
-      source: "Workday Insight",
-      sourceRecordId: leaveId,
-      version: (Number(existingTarget?.version) || 0) + 1,
-      createdAt: existingTarget?.createdAt || firestoreApi.serverTimestamp(),
-      createdBy: existingTarget?.createdBy || uid,
-      updatedAt: firestoreApi.serverTimestamp(),
-      updatedBy: uid,
-    };
+    const affectedItems = [...affected.values()];
+    const affectedMonths = [...new Set(affectedItems.map((item) => item.date.slice(0, 7)))];
+    for (const affectedMonth of affectedMonths) await ensureMonthlyMonthEditable(transaction, affectedMonth);
+    const snapshots = await Promise.all(affectedItems.map((item) => transaction.get(item.ref)));
+    const snapshotByPath = new Map(affectedItems.map((item, index) => [item.ref.path, snapshots[index]]));
+    const targetPaths = new Set(targetDates.map((targetDate) => firestoreApi.doc(db, "dailyPerformanceEntries", monthlyEntryDocumentId(employeeId, targetDate)).path));
 
-    if (moved && previousSnapshot?.exists() && String(previousSnapshot.data().sourceRecordId || "") === leaveId) transaction.delete(previousRef);
-    transaction.set(targetRef, payload);
-    const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
-    transaction.set(auditRef, { actorId: uid, action: "SYNC_LEAVE_TO_MONTHLY", targetType: "dailyPerformanceEntry", targetId: targetRef.id, before: moved ? (previousSnapshot?.data() || null) : existingTarget, after: { ...payload, createdAt: null, updatedAt: null }, createdAt: firestoreApi.serverTimestamp() });
-    return { changed: true };
+    for (const targetDate of targetDates) {
+      const targetRef = firestoreApi.doc(db, "dailyPerformanceEntries", monthlyEntryDocumentId(employeeId, targetDate));
+      const targetSnapshot = snapshotByPath.get(targetRef.path);
+      const existingTarget = targetSnapshot?.exists() ? targetSnapshot.data() : null;
+      if (existingTarget && String(existingTarget.sourceRecordId || "") !== leaveId) {
+        throw new Error(`Monthly Performance มีข้อมูลของพนักงานวันที่ ${targetDate} อยู่แล้ว กรุณาตรวจสอบหรือลบรายการเดิมก่อน`);
+      }
+    }
+
+    for (const previousDate of previousDates) {
+      const previousRef = firestoreApi.doc(db, "dailyPerformanceEntries", monthlyEntryDocumentId(previousEmployeeId, previousDate));
+      if (targetPaths.has(previousRef.path)) continue;
+      const previousSnapshot = snapshotByPath.get(previousRef.path);
+      if (previousSnapshot?.exists() && String(previousSnapshot.data().sourceRecordId || "") === leaveId
+          && Object.keys(previousSnapshot.data().scores || {}).length) {
+        throw new Error(`รายการ Monthly Performance วันที่ ${previousDate} ที่เชื่อมไว้มีคะแนน กรุณาลบคะแนนก่อนเปลี่ยนช่วงวันลา`);
+      }
+    }
+
+    const changedDates = [];
+    const removedDates = [];
+    for (const previousDate of previousDates) {
+      const previousRef = firestoreApi.doc(db, "dailyPerformanceEntries", monthlyEntryDocumentId(previousEmployeeId, previousDate));
+      if (targetPaths.has(previousRef.path)) continue;
+      const previousSnapshot = snapshotByPath.get(previousRef.path);
+      if (previousSnapshot?.exists() && String(previousSnapshot.data().sourceRecordId || "") === leaveId) {
+        transaction.delete(previousRef);
+        removedDates.push(previousDate);
+      }
+    }
+
+    for (const targetDate of targetDates) {
+      const targetRef = firestoreApi.doc(db, "dailyPerformanceEntries", monthlyEntryDocumentId(employeeId, targetDate));
+      const targetSnapshot = snapshotByPath.get(targetRef.path);
+      const existingTarget = targetSnapshot?.exists() ? targetSnapshot.data() : null;
+      const { yearMonth, year, month } = parseYearMonth(targetDate.slice(0, 7));
+      const businessData = {
+        employeeId, yearMonth, year, month, date: targetDate,
+        status: monthlyStatusFromLeaveType(leaveType),
+        countsAsWork: false,
+        note: monthlyLeaveSyncNote(leaveType, days, note),
+        scores: existingTarget?.scores && typeof existingTarget.scores === "object" ? existingTarget.scores : {},
+        legacyException: Boolean(existingTarget?.legacyException),
+      };
+      const unchanged = sameFields(existingTarget, businessData, Object.keys(businessData))
+        && String(existingTarget?.source || "") === "Workday Insight"
+        && String(existingTarget?.sourceRecordId || "") === leaveId;
+      if (unchanged) continue;
+      const payload = {
+        ...businessData,
+        source: "Workday Insight",
+        sourceRecordId: leaveId,
+        version: (Number(existingTarget?.version) || 0) + 1,
+        createdAt: existingTarget?.createdAt || firestoreApi.serverTimestamp(),
+        createdBy: existingTarget?.createdBy || uid,
+        updatedAt: firestoreApi.serverTimestamp(),
+        updatedBy: uid,
+      };
+      transaction.set(targetRef, payload);
+      changedDates.push(targetDate);
+    }
+
+    const changed = changedDates.length > 0 || removedDates.length > 0;
+    if (changed) {
+      const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
+      transaction.set(auditRef, {
+        actorId: uid,
+        action: "SYNC_LEAVE_TO_MONTHLY",
+        targetType: "dailyPerformanceEntry",
+        targetId: leaveId,
+        before: removedDates.length ? { employeeId: previousEmployeeId, dates: removedDates } : null,
+        after: { employeeId, dates: targetDates, changedDates },
+        createdAt: firestoreApi.serverTimestamp(),
+      });
+    }
+    return { changed, writeCount: changedDates.length + removedDates.length + (changed ? 1 : 0), dates: targetDates };
   }
 
 
@@ -2160,6 +2224,7 @@
     const auditRef = firestoreApi.doc(firestoreApi.collection(db, "auditLogs"));
     let unchanged = false;
     let monthlySyncChanged = false;
+    let monthlySyncWriteCount = 0;
     try {
       await firestoreApi.runTransaction(db, async (transaction) => {
         const [employeeSnapshot, existingSnapshot] = await Promise.all([transaction.get(employeeRef), transaction.get(ref)]);
@@ -2170,8 +2235,9 @@
         const currentVersion = Number(existing?.version) || 0;
         if (currentVersion !== expectedVersion) { const conflict = new Error("VERSION_CONFLICT"); conflict.code = "VERSION_CONFLICT"; throw conflict; }
         const businessData = { employeeId, date, yearMonth, year, month, leaveType, days, note, excludeHolidays };
-        const monthlySync = await syncLeaveToMonthlyPerformance(transaction, { uid, leaveId: id, employeeId, date, leaveType, days, note, existingLeave: existing });
+        const monthlySync = await syncLeaveToMonthlyPerformance(transaction, { uid, leaveId: id, employeeId, date, leaveType, days, note, excludeHolidays, existingLeave: existing });
         monthlySyncChanged = monthlySync.changed;
+        monthlySyncWriteCount = monthlySync.writeCount;
         if (sameFields(existing, businessData, Object.keys(businessData))) { unchanged = true; return; }
         const payload = {
           ...businessData,
@@ -2190,7 +2256,7 @@
         transaction.set(auditRef, { actorId: uid, action: existing ? "UPDATE_LEAVE_RECORD" : "CREATE_LEAVE_RECORD", targetType: "leaveRecord", targetId: id, before: existing || null, after: { ...payload, createdAt: null, updatedAt: null }, createdAt: firestoreApi.serverTimestamp() });
       });
       const saved = leaveFromSnapshot(await firestoreApi.getDoc(ref));
-      return attachWriteMeta(saved, unchanged && !monthlySyncChanged ? "unchanged" : "written", (unchanged ? 0 : 2) + (monthlySyncChanged ? 2 : 0));
+      return attachWriteMeta(saved, unchanged && !monthlySyncChanged ? "unchanged" : "written", (unchanged ? 0 : 2) + monthlySyncWriteCount);
     } catch (error) {
       if (error?.code === "VERSION_CONFLICT" || error?.message === "VERSION_CONFLICT") throw error;
       throw friendlyError(error, "บันทึกวันลาไม่สำเร็จ");
@@ -2208,18 +2274,31 @@
         const snapshot = await transaction.get(ref);
         if (!snapshot.exists()) throw new Error("ไม่พบรายการวันที่ต้องการลบ");
         const leave = snapshot.data();
-        await ensureMonthlyMonthEditable(transaction, String(leave.yearMonth || String(leave.date || "").slice(0, 7)));
-        const monthlyRef = firestoreApi.doc(db, "dailyPerformanceEntries", monthlyEntryDocumentId(String(leave.employeeId || ""), String(leave.date || "")));
-        const monthlySnapshot = await transaction.get(monthlyRef);
-        const linkedMonthly = monthlySnapshot.exists() && String(monthlySnapshot.data().sourceRecordId || "") === snapshot.id;
-        if (linkedMonthly && Object.keys(monthlySnapshot.data().scores || {}).length) {
-          throw new Error("รายการ Monthly Performance ที่เชื่อมไว้มีคะแนน กรุณาลบคะแนนก่อนลบวันลา");
+        const leaveDates = leaveCoveredDates(String(leave.date || ""), Number(leave.days) || 0, leave.excludeHolidays === true);
+        const affectedMonths = [...new Set(leaveDates.map((leaveDate) => leaveDate.slice(0, 7)))];
+        for (const affectedMonth of affectedMonths) await ensureMonthlyMonthEditable(transaction, affectedMonth);
+        const monthlyRefs = leaveDates.map((leaveDate) => firestoreApi.doc(db, "dailyPerformanceEntries", monthlyEntryDocumentId(String(leave.employeeId || ""), leaveDate)));
+        const monthlySnapshots = await Promise.all(monthlyRefs.map((monthlyRef) => transaction.get(monthlyRef)));
+        const linkedMonthly = monthlySnapshots
+          .map((monthlySnapshot, index) => ({ monthlySnapshot, monthlyRef: monthlyRefs[index], date: leaveDates[index] }))
+          .filter((item) => item.monthlySnapshot.exists() && String(item.monthlySnapshot.data().sourceRecordId || "") === snapshot.id);
+        const scoredLinked = linkedMonthly.find((item) => Object.keys(item.monthlySnapshot.data().scores || {}).length);
+        if (scoredLinked) {
+          throw new Error(`รายการ Monthly Performance วันที่ ${scoredLinked.date} ที่เชื่อมไว้มีคะแนน กรุณาลบคะแนนก่อนลบวันลา`);
         }
         transaction.delete(ref);
         transaction.set(auditRef, { actorId: uid, action: "DELETE_LEAVE_RECORD", targetType: "leaveRecord", targetId: snapshot.id, before: snapshot.data(), after: null, createdAt: firestoreApi.serverTimestamp() });
-        if (linkedMonthly) {
-          transaction.delete(monthlyRef);
-          transaction.set(monthlyAuditRef, { actorId: uid, action: "DELETE_LEAVE_MONTHLY_SYNC", targetType: "dailyPerformanceEntry", targetId: monthlyRef.id, before: monthlySnapshot.data(), after: null, createdAt: firestoreApi.serverTimestamp() });
+        linkedMonthly.forEach((item) => transaction.delete(item.monthlyRef));
+        if (linkedMonthly.length) {
+          transaction.set(monthlyAuditRef, {
+            actorId: uid,
+            action: "DELETE_LEAVE_MONTHLY_SYNC",
+            targetType: "dailyPerformanceEntry",
+            targetId: snapshot.id,
+            before: { employeeId: String(leave.employeeId || ""), dates: linkedMonthly.map((item) => item.date) },
+            after: null,
+            createdAt: firestoreApi.serverTimestamp(),
+          });
         }
       });
     } catch (error) {
