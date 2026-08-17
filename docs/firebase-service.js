@@ -613,16 +613,8 @@
     })[leaveType] || "OTHER_LEAVE";
   }
 
-  function monthlyLeaveSyncNote(leaveType, days, note) {
-    const labels = {
-      sick: "\u0e25\u0e32\u0e1b\u0e48\u0e27\u0e22",
-      personal: "\u0e25\u0e32\u0e01\u0e34\u0e08",
-      vacation: "\u0e25\u0e32\u0e1e\u0e31\u0e01\u0e23\u0e49\u0e2d\u0e19",
-      ordination: "\u0e25\u0e32\u0e2d\u0e38\u0e1b\u0e2a\u0e21\u0e1a\u0e17",
-      other: "\u0e25\u0e32\u0e2d\u0e37\u0e48\u0e19\u0e46",
-    };
-    const detail = String(note || "").trim();
-    return `Workday Insight - ${labels[leaveType] || labels.other} ${days} \u0e27\u0e31\u0e19${detail ? `: ${detail}` : ""}`.slice(0, 1000);
+  function monthlyLeaveSyncNote(_leaveType, _days, note) {
+    return String(note || "").trim().slice(0, 1000);
   }
 
   async function syncLeaveToMonthlyPerformance(transaction, input) {
@@ -1015,9 +1007,14 @@
       const batch = firestoreApi.writeBatch(db);
       const changedIds = [];
       let unchangedCount = 0;
+      let skippedLeaveCount = 0;
       employeeIds.forEach((employeeId) => {
         const id = monthlyEntryDocumentId(employeeId, date);
         const before = existing.get(id) || null;
+        if (String(before?.source || '') === 'Workday Insight') {
+          skippedLeaveCount += 1;
+          return;
+        }
         const legacyException = before?.legacyException === true;
         const businessData = {
           employeeId, yearMonth, year, month, date, status,
@@ -1046,7 +1043,7 @@
       });
 
       if (!changedIds.length) {
-        return { count: 0, unchangedCount, total: employeeIds.length, date, estimatedWrites: 0 };
+        return { count: 0, unchangedCount, skippedLeaveCount, total: employeeIds.length, date, estimatedWrites: 0 };
       }
       const auditRef = firestoreApi.doc(firestoreApi.collection(db, 'auditLogs'));
       batch.set(auditRef, {
@@ -1055,11 +1052,11 @@
         targetType: 'dailyPerformanceEntry',
         targetId: date,
         before: null,
-        after: { date, status, changedCount: changedIds.length, unchangedCount, employeeIds: changedIds },
+        after: { date, status, changedCount: changedIds.length, unchangedCount, skippedLeaveCount, employeeIds: changedIds },
         createdAt: firestoreApi.serverTimestamp(),
       });
       await batch.commit();
-      return { count: changedIds.length, unchangedCount, total: employeeIds.length, date, estimatedWrites: changedIds.length + 1 };
+      return { count: changedIds.length, unchangedCount, skippedLeaveCount, total: employeeIds.length, date, estimatedWrites: changedIds.length + 1 };
     } catch (error) {
       throw friendlyError(error, "บันทึกคะแนนพนักงานทุกคนไม่สำเร็จ");
     }

@@ -2947,6 +2947,14 @@ function monthlyStatusLabel(statusId) {
   return monthlyStatusDefinition(statusId).name;
 }
 
+function monthlyEntryNoteForDisplay(entry) {
+  let note = String(entry?.note || "").replace(/^Workday Insight\s*-\s*/i, "").trim();
+  if (String(entry?.source || "") === "Workday Insight") {
+    note = note.replace(/^(?:\u0e25\u0e32\u0e1b\u0e48\u0e27\u0e22|\u0e25\u0e32\u0e01\u0e34\u0e08|\u0e25\u0e32\u0e1e\u0e31\u0e01\u0e23\u0e49\u0e2d\u0e19|\u0e25\u0e32\u0e2d\u0e38\u0e1b\u0e2a\u0e21\u0e1a\u0e17|\u0e25\u0e32\u0e2d\u0e37\u0e48\u0e19\u0e46)\s+\d+(?:\.\d+)?\s*\u0e27\u0e31\u0e19(?:\s*:\s*)?/u, "").trim();
+  }
+  return note;
+}
+
 function monthlyStatusBadge(statusId) {
   const classes = {
     WORK: "badge-ready",
@@ -3300,7 +3308,7 @@ function renderMonthlyEntrySection() {
             const value = editing?.scores?.[criterion.id] ?? criterion.normalScore;
             return `<label class="criterion-card field"><span class="criterion-title">${index + 1}. ${escapeHtml(criterion.name)}</span><select data-monthly-criterion="${criterion.id}" ${locked || (!selectedDefinition.countsAsWork && !offDayPerformance) ? "disabled" : ""}>${MONTHLY_SCORE_OPTIONS.map((score) => `<option value="${score}" ${Number(score) === Number(value) ? "selected" : ""}>${Number(score).toFixed(2)}</option>`).join("")}${Number(value) === 3.5 ? `<option value="3.5" selected>3.50 · ประวัติพิเศษ</option>` : ""}</select><span class="criterion-hint">พื้นฐาน ${criterion.normalScore.toFixed(2)}</span></label>`;
           }).join("")}</div>
-          <div class="field" style="margin-top:14px"><label for="monthlyEntryNote">หมายเหตุ</label><textarea id="monthlyEntryNote" maxlength="1000" ${locked ? "disabled" : ""}>${escapeHtml(editing?.note || "")}</textarea><span class="field-help">กรณีทำคะแนนในวันลา/วันหยุดต้องระบุหมายเหตุ</span></div>
+          <div class="field" style="margin-top:14px"><label for="monthlyEntryNote">หมายเหตุ</label><textarea id="monthlyEntryNote" maxlength="1000" ${locked ? "disabled" : ""}>${escapeHtml(monthlyEntryNoteForDisplay(editing))}</textarea><span class="field-help">กรณีทำคะแนนในวันลา/วันหยุดต้องระบุหมายเหตุ</span></div>
           <div class="form-actions"><button class="button button-primary" type="submit" ${locked ? "disabled" : ""}><i data-lucide="save"></i>${editing ? "บันทึกการแก้ไข" : "บันทึกรายวัน"}</button><button id="clearMonthlyEntryForm" class="button button-ghost" type="button"><i data-lucide="rotate-ccw"></i>ล้างฟอร์ม</button></div>
         </form>
       </article>
@@ -3341,7 +3349,7 @@ function renderMonthlyHistorySection() {
       </div>
       <div class="table-wrap monthly-history-table"><table><thead><tr><th>วันที่</th><th>พนักงาน</th><th>สถานะ</th>${MONTHLY_CRITERIA.map((_, index) => `<th class="money">C${index + 1}</th>`).join("")}<th>หมายเหตุ</th><th>จัดการ</th></tr></thead><tbody>${rows.map((entry) => {
         const employee = employeesById.get(entry.employeeId);
-        return `<tr><td>${formatDateOnly(entry.date)}</td><td><strong>${escapeHtml(employee?.employeeCode || "-")}</strong><span class="table-note">${escapeHtml(employee?.fullName || entry.employeeId)}</span></td><td><span class="badge ${monthlyStatusBadge(entry.status)}">${escapeHtml(monthlyStatusLabel(entry.status))}</span>${entry.legacyException ? `<span class="table-note">มีคะแนนประวัติพิเศษ</span>` : ""}</td>${MONTHLY_CRITERIA.map((criterion) => `<td class="money">${entry.scores?.[criterion.id] === undefined ? "-" : Number(entry.scores[criterion.id]).toFixed(2)}</td>`).join("")}<td>${escapeHtml(entry.note || "-")}</td><td><div class="table-actions"><button class="icon-button edit-monthly-entry" data-id="${escapeHtml(entry.id)}" type="button" title="แก้ไข" aria-label="แก้ไขคะแนนรายวัน"><i data-lucide="pencil"></i></button><button class="icon-button danger delete-monthly-entry" data-id="${escapeHtml(entry.id)}" type="button" title="ลบ" aria-label="ลบคะแนนรายวัน" ${monthlyIsClosed() ? "disabled" : ""}><i data-lucide="trash-2"></i></button></div></td></tr>`;
+        return `<tr><td>${formatDateOnly(entry.date)}</td><td><strong>${escapeHtml(employee?.employeeCode || "-")}</strong><span class="table-note">${escapeHtml(employee?.fullName || entry.employeeId)}</span></td><td><span class="badge ${monthlyStatusBadge(entry.status)}">${escapeHtml(monthlyStatusLabel(entry.status))}</span>${entry.legacyException ? `<span class="table-note">มีคะแนนประวัติพิเศษ</span>` : ""}</td>${MONTHLY_CRITERIA.map((criterion) => `<td class="money">${entry.scores?.[criterion.id] === undefined ? "-" : Number(entry.scores[criterion.id]).toFixed(2)}</td>`).join("")}<td>${escapeHtml(monthlyEntryNoteForDisplay(entry) || "-")}</td><td><div class="table-actions"><button class="icon-button edit-monthly-entry" data-id="${escapeHtml(entry.id)}" type="button" title="แก้ไข" aria-label="แก้ไขคะแนนรายวัน"><i data-lucide="pencil"></i></button><button class="icon-button danger delete-monthly-entry" data-id="${escapeHtml(entry.id)}" type="button" title="ลบ" aria-label="ลบคะแนนรายวัน" ${monthlyIsClosed() ? "disabled" : ""}><i data-lucide="trash-2"></i></button></div></td></tr>`;
       }).join("") || `<tr><td colspan="11"><div class="empty-state"><i data-lucide="inbox"></i><p>ไม่พบข้อมูลตามตัวกรอง</p></div></td></tr>`}</tbody></table></div>
     </article>`;
 }
@@ -3438,7 +3446,7 @@ function bindMonthlyEntryEvents() {
       if (employeeId === MONTHLY_ALL_EMPLOYEES_ID) {
         if (!await showConfirmDialog({
           title: "บันทึกให้พนักงานทุกคน",
-          message: "ระบบจะเขียนเฉพาะข้อมูลที่เปลี่ยน และข้ามรายการที่เหมือนเดิม",
+          message: "ระบบจะเขียนเฉพาะข้อมูลที่เปลี่ยน ข้ามรายการเดิม และข้ามพนักงานที่มีข้อมูลลาในวันที่เลือก",
           tone: "warning",
           confirmText: "บันทึกทั้งหมด",
           details: [
@@ -3449,7 +3457,9 @@ function bindMonthlyEntryEvents() {
         const result = await window.EmployeeHubDatabase.saveDailyPerformanceEntriesBatch({
           employeeIds: sortedActiveEmployees().map((employee) => employee.id), date, status, note, scores,
         });
-        showToast(result.count ? `บันทึกเฉพาะข้อมูลที่เปลี่ยน ${result.count} รายการ · ข้ามข้อมูลเดิม ${result.unchangedCount || 0} รายการ` : `ข้อมูลเหมือนเดิมทั้งหมด ${result.unchangedCount || result.total || 0} รายการ · ไม่ใช้โควตาเขียน`);
+        const skippedLeaveCount = Number(result.skippedLeaveCount) || 0;
+        const skippedLeaveText = skippedLeaveCount ? ` · ข้ามพนักงานที่ลา ${skippedLeaveCount} รายการ` : "";
+        showToast(result.count ? `บันทึกเฉพาะข้อมูลที่เปลี่ยน ${result.count} รายการ · ข้ามข้อมูลเดิม ${result.unchangedCount || 0} รายการ${skippedLeaveText}` : `ไม่มีข้อมูลใหม่ที่ต้องบันทึก · ข้ามข้อมูลเดิม ${result.unchangedCount || 0} รายการ${skippedLeaveText} · ไม่ใช้โควตาเขียน`);
       } else {
         const savedEntry = await window.EmployeeHubDatabase.saveDailyPerformanceEntry({
           id: editing?.id, employeeId, date, status, note, scores,
@@ -3615,7 +3625,7 @@ function exportMonthlySummaryCsv() {
 function exportMonthlyEntriesCsv() {
   const employeesById = employeeMap();
   const rows = [["วันที่", "รหัสพนักงาน", "ชื่อพนักงาน", "สถานะ", ...MONTHLY_CRITERIA.map((criterion) => criterion.name), "หมายเหตุ", "Legacy Exception", "แก้ไขล่าสุด"]];
-  state.monthlyEntries.filter((entry) => !state.monthlyHistoryEmployeeId || entry.employeeId === state.monthlyHistoryEmployeeId).filter((entry) => !state.monthlyHistoryDate || entry.date === state.monthlyHistoryDate).forEach((entry) => { const employee = employeesById.get(entry.employeeId); rows.push([entry.date, employee?.employeeCode || "", employee?.fullName || entry.employeeId, monthlyStatusLabel(entry.status), ...MONTHLY_CRITERIA.map((criterion) => entry.scores?.[criterion.id] ?? ""), entry.note, entry.legacyException ? "ใช่" : "ไม่", entry.updatedAt]); });
+  state.monthlyEntries.filter((entry) => !state.monthlyHistoryEmployeeId || entry.employeeId === state.monthlyHistoryEmployeeId).filter((entry) => !state.monthlyHistoryDate || entry.date === state.monthlyHistoryDate).forEach((entry) => { const employee = employeesById.get(entry.employeeId); rows.push([entry.date, employee?.employeeCode || "", employee?.fullName || entry.employeeId, monthlyStatusLabel(entry.status), ...MONTHLY_CRITERIA.map((criterion) => entry.scores?.[criterion.id] ?? ""), monthlyEntryNoteForDisplay(entry), entry.legacyException ? "ใช่" : "ไม่", entry.updatedAt]); });
   downloadCsv(rows, `monthly-performance-entries-${state.monthlyMonth}.csv`);
 }
 
