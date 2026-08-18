@@ -2961,7 +2961,7 @@ function monthlyStatusBadge(statusId) {
     WEEKEND_WORK: "badge-ready",
     SICK_LEAVE: "badge-danger",
     PERSONAL_LEAVE: "badge-progress",
-    VACATION: "badge-ready",
+    VACATION: "badge-vacation",
     OTHER_LEAVE: "badge-progress",
     COMP_OFF: "badge-planned",
     HOLIDAY: "badge-planned",
