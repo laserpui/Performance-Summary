@@ -59,7 +59,7 @@ const MONTHLY_STATUSES = Object.freeze([
   { id: "WEEKEND_WORK", name: "ทำงานวันหยุด", countsAsWork: true },
   { id: "SICK_LEAVE", name: "ลาป่วย", countsAsWork: false },
   { id: "PERSONAL_LEAVE", name: "ลากิจ", countsAsWork: false },
-  { id: "VACATION", name: "พักร้อน", countsAsWork: false },
+  { id: "VACATION", name: "ลาพักร้อน", countsAsWork: false },
   { id: "OTHER_LEAVE", name: "\u0e25\u0e32\u0e2d\u0e37\u0e48\u0e19\u0e46", countsAsWork: false },
   { id: "COMP_OFF", name: "ชดเชย", countsAsWork: false },
   { id: "HOLIDAY", name: "วันหยุด", countsAsWork: false },
@@ -2470,10 +2470,10 @@ function leaveTypeBadge(type) {
   const classes = {
     sick: "badge-danger",
     personal: "badge-progress",
-    vacation: "badge-ready",
-    other: "badge-planned",
+    vacation: "badge-vacation",
+    other: "badge-other-leave",
   };
-  return classes[normalizedLeaveType(type)] || "badge-planned";
+  return classes[normalizedLeaveType(type)] || "badge-other-leave";
 }
 
 function sortedActiveEmployees() {
@@ -2962,7 +2962,7 @@ function monthlyStatusBadge(statusId) {
     SICK_LEAVE: "badge-danger",
     PERSONAL_LEAVE: "badge-progress",
     VACATION: "badge-vacation",
-    OTHER_LEAVE: "badge-progress",
+    OTHER_LEAVE: "badge-other-leave",
     COMP_OFF: "badge-planned",
     HOLIDAY: "badge-planned",
   };

@@ -230,6 +230,7 @@ input[data-calendar="gregorian"] {
 .badge-planned { color: #546879; background: #e9f0f4; }
 .badge-danger { color: #8c333a; background: #fbe0e2; }
 .badge-vacation { color: #6639a6; background: #eee5ff; }
+.badge-other-leave { color: #0f6674; background: #dff4f6; }
 
 .toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 15px; }
 .toolbar > * { min-width: 160px; }
@@ -1207,6 +1208,7 @@ tbody tr:nth-child(even):hover td { background: rgba(226,246,251,.46); }
 .badge-warning { border-color: rgba(184,106,11,.13); }
 .badge-danger { border-color: rgba(189,70,81,.13); }
 .badge-vacation { border-color: rgba(102,57,166,.16); }
+.badge-other-leave { border-color: rgba(15,102,116,.16); }
 .notice { border: 1px solid rgba(25,56,89,.08); box-shadow: 0 6px 18px rgba(38,74,104,.04); }
 .empty-state { border-radius: 15px; background: linear-gradient(145deg, rgba(248,252,253,.6), rgba(255,255,255,.36)); }
 
